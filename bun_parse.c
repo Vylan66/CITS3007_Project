@@ -72,8 +72,19 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
 }
 
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
-
   // TODO: implement asset record parsing and validation
+  
+  // RELEVANT VALIDATIONS
+  // At position asset_table_offset, there must be asset_count many valid Asset Entry Table records.
+  // No two file sections may overlap (either a.offset + a.size <= b.start or b.offset + b.size <= a.start)
+
+  // Calculate the size of the asset entry table = BunHeader->AssetCount * sizeof(BunAssetRecord)
+  // Allocate space for an array of BunAssetRecord structs this large. Make sure you don't run out of memory.
+  // Nove BunParseContext->file to BunHeader->asset_table_offset
+  // Loop for BunHeader->AssetCount times
+      // if (fread(&BunAssetRecord->X, sizeof(Y), 1, fp) != 1) return -1; where X is a field and Y is the size of the field.
+      // NOTE: read each section in little-endian
+  // validate that you have AssetCount number of assets
 
   return BUN_OK;
 }
