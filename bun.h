@@ -101,6 +101,7 @@ typedef struct {
 
     BunAssetRecord *assets;      // dynamically allocated array of parsed asset records
     u32      parsed_asset_count; // number of asset records stored in assets
+    char   **asset_names;        // dynamically allocated array of parsed asset names
 
     BunViolation *violations;    // dynamically allocated array of violation messages
     size_t   violation_count;    // number of recorded violations
