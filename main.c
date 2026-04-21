@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 #include "bun.h"
 
@@ -20,6 +21,8 @@ int main(int argc, char *argv[]) {
   }
 
   result = bun_parse_header(&ctx, &header);
+  
+
   if (result != BUN_OK) {
     // bun_parse_header returns a code; printing the specifics is up to
     // you -- you may want to extend the API to return error details
@@ -28,7 +31,18 @@ int main(int argc, char *argv[]) {
     return result;
   }
 
+  //printing here for now : for easy testing
+  printf("Magic: 0x%x\n", header.magic);
+  printf("Version: %u.%u\n", header.version_major, header.version_minor);
+  printf("Asset count: %u\n", header.asset_count);
+  printf("Asset table offset: %" PRIu64 "\n", header.asset_table_offset);
+  printf("String table offset: %" PRIu64 "\n", header.string_table_offset);
+  printf("Data section offset: %" PRIu64 "\n", header.data_section_offset);
+
+
   result = bun_parse_assets(&ctx, &header);
+  // TODO: implement asset record parsing
+  
 
   // TODO: on BUN_OK, print human-readable summary to stdout.
   //     on BUN_MALFORMED / BUN_UNSUPPORTED, print violation list to stderr.
