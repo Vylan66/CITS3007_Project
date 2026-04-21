@@ -45,7 +45,8 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
 
 //BASIC LOGIC IS DONE
 //TODO: ADD SAFETEY CHECKS
-//TODO: check tasks spreadsheet: Task ID: H5,H6,H7
+//TODO: check tasks spreadsheet: Task ID: H6
+//TODO: currently all printing takes place inside parser and error detection happens one at a time. what i need to do is store all errors each time it is encountered, continue reading header till the end. print all errors together from main(task H7)
 bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
   u8 buf[BUN_HEADER_SIZE];
 
@@ -73,7 +74,7 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
     | (u64)b[off+6] << 48 \
     | (u64)b[off+7] << 56)
 
-  // 3. Populate header 
+  // 3. Populate header (read fields in order)
   size_t off = 0;
 
   header->magic = read_u32_le(buf, off);
@@ -127,20 +128,68 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
     return BUN_MALFORMED;
   }
 
-  // Bounds check (must be within file)
   u64 file_size = (u64)ctx->file_size;
 
-  if (header->asset_table_offset > file_size ||
-      header->string_table_offset > file_size ||
-      header->data_section_offset > file_size) {
-    return BUN_MALFORMED;
+  //Compute asset table size safely
+  u64 asset_table_size = (u64)header->asset_count * 48;
+
+  // Section starts 
+  u64 asset_start = header->asset_table_offset;
+  u64 string_start = header->string_table_offset;
+  u64 data_start = header->data_section_offset;
+
+  // Section ends (with overflow protection) 
+  u64 asset_end, string_end, data_end;
+
+  if (asset_start > UINT64_MAX - asset_table_size) {
+      printf("Error: asset table end overflow\n");
+      return BUN_MALFORMED;
+  }
+  asset_end = asset_start + asset_table_size;
+
+  if (string_start > UINT64_MAX - header->string_table_size) {
+      printf("Error: string table end overflow\n");
+      return BUN_MALFORMED;
+  }
+  string_end = string_start + header->string_table_size;
+
+  if (data_start > UINT64_MAX - header->data_section_size) {
+      printf("Error: data section end overflow\n");
+      return BUN_MALFORMED;
+  }
+  data_end = data_start + header->data_section_size;
+
+  //Bounds check
+  if (asset_end > file_size) {
+      printf("Error: asset table exceeds file bounds\n");
+      return BUN_MALFORMED;
+  }
+  if (string_end > file_size) {
+      printf("Error: string table exceeds file bounds\n");
+      return BUN_MALFORMED;
+  }
+  if (data_end > file_size) {
+      printf("Error: data section exceeds file bounds\n");
+      return BUN_MALFORMED;
   }
 
-  // Section overflow check (offset + size should not exceed file)
-  if (header->string_table_offset + header->string_table_size > file_size ||
-      header->data_section_offset + header->data_section_size > file_size) {
-    return BUN_MALFORMED;
+  //Overlap checks
+  if (asset_start < string_end && string_start < asset_end) {
+      printf("Error: asset table overlaps string table\n");
+      return BUN_MALFORMED;
   }
+
+  if (asset_start < data_end && data_start < asset_end) {
+      printf("Error: asset table overlaps data section\n");
+      return BUN_MALFORMED;
+  }
+
+  if (string_start < data_end && data_start < string_end) {
+      printf("Error: string table overlaps data section\n");
+      return BUN_MALFORMED;
+  }
+
+
 
   return BUN_OK;
 }
