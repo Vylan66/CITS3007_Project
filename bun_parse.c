@@ -20,40 +20,60 @@ static u32 read_u32_le(const u8 *buf, size_t offset) {
 }
 
 bun_result_t bun_read_data(BunHeader *header, BunParseContext *ctx, BunAssetRecord *entry, FILE *out_fptr) {
-  // Cases: data section out of bounds, asset record start out of bounds, 
-  // asset record end out of bounds, compression unsupported
-  if (header->data_section_offset >= (uint64_t)ctx->file_size) {return BUN_MALFORMED;}
-  if (entry->data_offset > (uint64_t)ctx->file_size - header->data_section_offset) {return BUN_MALFORMED;} 
+  // FUNCTION: take in a single asset record and output the decompressed version into *out_fptr.
+  // ENSURE THE FILE POINTER IS SECURE. ANYONE WITH THE SAME PERMS MAY READ IT OTHERWISE.
+  // See tmpfile() and the lecture/lab content on this.
+  // Returns errors for the following scenarios: 
+  //     * BUN_MALFORMED   data section out of bounds
+  //     * BUN_MALFORMED   asset record start out of bounds
+  //     * BUN_MALFORMED   asset record end out of bounds
+  //     * BUN_MALFORMED   fread cannot read from ctx->file (all cases)
+  //     * BUN_MALFORMED   fwrite cannot write to out_fptr (all cases)
+  //     * BUN_MALFORMED   RLE count byte is 0 (RLE case)              <- this one can be argued against
+  //     * BUN_UNSUPPORTED compression unsupported (default case)
 
-  uint64_t actual_offset = header->data_section_offset + entry->data_offset;
+  if (header->data_section_offset >= (u64)ctx->file_size) {return BUN_MALFORMED;}
+  if (entry->data_offset > (u64)ctx->file_size - header->data_section_offset) {return BUN_MALFORMED;} 
 
-  if (entry->data_size > (uint64_t)ctx->file_size - actual_offset) {return BUN_MALFORMED;}
-  if (entry->compression > 1) {return BUN_UNSUPPORTED;}
+  u64 actual_offset = header->data_section_offset + entry->data_offset;
+
+  if (entry->data_size > (u64)ctx->file_size - actual_offset) {return BUN_MALFORMED;}
 
   if (fseeko(ctx->file, (off_t)actual_offset, SEEK_SET) != 0) {
     return BUN_ERR_IO;
   }
-  uint64_t remaining = entry->data_size;
-  uint8_t buf[64*1024];
-    
+   
   switch (entry->compression) {
-  case 0: /* raw copy */
-      while (remaining > 0) {
-          size_t toread = (size_t)(remaining < sizeof(buf) ? remaining : sizeof(buf));
-          size_t n = fread(buf, 1, toread, ctx->file);
-          if (n == 0) {return BUN_MALFORMED;}
-          if (fwrite(buf, 1, n, out_fptr) != n) {return BUN_MALFORMED;}
-          remaining -= n;
-      }
-      break;
-  case 1: /* RLE decode */
-    printf("RLE SECTION IS NOT DONE YET. BE WITH YOU SOON!");
+  case 0: { /* raw copy */
+    u64 remaining = entry->data_size;
+    u8 buf[64*1024];
+    while (remaining > 0) {
+        size_t toread = (size_t)(remaining < sizeof(buf) ? remaining : sizeof(buf));
+        size_t n = fread(buf, 1, toread, ctx->file);
+        if (n == 0) {return BUN_MALFORMED;}
+        if (fwrite(buf, 1, n, out_fptr) != n) {return BUN_MALFORMED;}
+        remaining -= n;
+    }
+    break;
+  }
+  case 1: { /* RLE decompression */
+    if (entry->data_size % 2 != 0) { return BUN_MALFORMED; }
+    u64 remaining = entry->data_size;  
+    BunRlePair pair;
+
+    while (remaining > 0) {
+      if (fread(&pair, sizeof(BunRlePair), 1, ctx->file) != 1) { return BUN_MALFORMED; }
+      if (pair.count == 0) { return BUN_MALFORMED; }
+      if (fwrite(&pair.value, sizeof(u8), pair.count, out_fptr) != pair.count) { return BUN_MALFORMED; }
+      remaining -= (u64) sizeof(BunRlePair);
+    }
+    break;
+  }
+  case 2: { /* zlib decompression */
+    // ZLIB MAY OR MAY NOT BE SUPPORTED!
     return BUN_UNSUPPORTED;
     break;
-  case 2: /* zlib decode */
-    printf("ZLIB MAY NOT BE SUPPORTED!");
-    return BUN_UNSUPPORTED;
-    break;
+  }
   default:
     return BUN_UNSUPPORTED;
   }

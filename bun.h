@@ -85,6 +85,11 @@ typedef struct {
     // add further fields here as needed
 } BunParseContext;
 
+typedef struct {
+    u8 count;
+    u8 value;
+} BunRlePair;
+
 //
 // Public API
 //
