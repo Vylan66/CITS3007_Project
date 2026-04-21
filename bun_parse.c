@@ -45,6 +45,7 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
 
 //BASIC LOGIC IS DONE
 //TODO: ADD SAFETEY CHECKS
+//TODO: check tasks spreadsheet: Task ID: H5,H6,H7
 bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
   u8 buf[BUN_HEADER_SIZE];
 
