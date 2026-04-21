@@ -24,14 +24,16 @@ int main(int argc, char *argv[]) {
   
 
   if (result != BUN_OK) {
-    // bun_parse_header returns a code; printing the specifics is up to
-    // you -- you may want to extend the API to return error details
+    for (int i = 0; i < ctx.errors.count; i++) {
+      fprintf(stderr, "%s\n", ctx.errors.messages[i]);
+    }
+
     fprintf(stderr, "Error: header invalid or unsupported (code %d)\n", result);
+
     bun_close(&ctx);
     return result;
   }
 
-  //printing here for now : for easy testing
   printf("Magic: 0x%x\n", header.magic);
   printf("Version: %u.%u\n", header.version_major, header.version_minor);
   printf("Asset count: %u\n", header.asset_count);

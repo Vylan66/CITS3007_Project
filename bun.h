@@ -38,6 +38,9 @@ typedef uint64_t u64;
 #define BUN_FLAG_ENCRYPTED  0x1u
 #define BUN_FLAG_EXECUTABLE 0x2u
 
+#define BUN_MAX_ERRORS 32
+#define BUN_ERROR_MSG_LEN 256
+
 typedef struct {
     u32 magic;
     u16 version_major;
@@ -50,6 +53,11 @@ typedef struct {
     u64 data_section_size;
     u64 reserved;
 } BunHeader;
+
+typedef struct {
+    char messages[BUN_MAX_ERRORS][BUN_ERROR_MSG_LEN];
+    int count;
+} BunErrorList; //for listing violations or errors
 
 typedef struct {
     u32 name_offset;
@@ -82,6 +90,7 @@ typedef struct {
 typedef struct {
     FILE   *file;           // open file handle
     long    file_size;      // total file size in bytes
+    BunErrorList errors;
     // add further fields here as needed
 } BunParseContext;
 

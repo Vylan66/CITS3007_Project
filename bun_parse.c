@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdarg.h>
 
 #include "bun.h"
 
@@ -19,6 +20,8 @@ static u32 read_u32_le(const u8 *buf, size_t offset) {
 //
 // API implementation
 //
+
+
 
 bun_result_t bun_open(const char *path, BunParseContext *ctx) {
   // we open the file; seek to the end, to get the size; then jump back to the
@@ -43,12 +46,33 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
   return BUN_OK;
 }
 
+//to list errors together
+static void bun_add_error(BunParseContext *ctx, const char *fmt, ...) {
+    if (ctx->errors.count >= BUN_MAX_ERRORS)
+        return;
+
+    va_list args;
+    va_start(args, fmt);
+
+    vsnprintf(
+        ctx->errors.messages[ctx->errors.count],
+        BUN_ERROR_MSG_LEN,
+        fmt,
+        args
+    );
+
+    va_end(args);
+
+    ctx->errors.count++;
+}
+
+
 //BASIC LOGIC IS DONE
 //TODO: ADD SAFETEY CHECKS
 //TODO: check tasks spreadsheet: Task ID: H6
-//TODO: currently all printing takes place inside parser and error detection happens one at a time. what i need to do is store all errors each time it is encountered, continue reading header till the end. print all errors together from main(task H7)
 bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
   u8 buf[BUN_HEADER_SIZE];
+  bun_result_t result = BUN_OK;
 
   // 1. Check file is large enough
   if (ctx->file_size < (long)BUN_HEADER_SIZE) {
@@ -109,90 +133,68 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
 
   // 4. VALIDATION
 
-  // Magic check
   if (header->magic != BUN_MAGIC) {
-    return BUN_MALFORMED;
+      bun_add_error(ctx, "invalid magic number");
+      result = BUN_MALFORMED;
+    }
+
+    if (header->version_major != 1 || header->version_minor != 0) {
+      return BUN_UNSUPPORTED; // allowed immediate stop per spec
+    }
+
+    if ((header->asset_table_offset % 4 != 0) ||
+        (header->string_table_offset % 4 != 0) ||
+        (header->data_section_offset % 4 != 0) ||
+        (header->string_table_size % 4 != 0) ||
+        (header->data_section_size % 4 != 0)) {
+
+      bun_add_error(ctx, "unaligned section offset or size");
+      result = BUN_MALFORMED;
+    }
+
+    u64 file_size = (u64)ctx->file_size;
+    u64 asset_table_size = (u64)header->asset_count * 48;
+
+    u64 asset_start = header->asset_table_offset;
+    u64 string_start = header->string_table_offset;
+    u64 data_start = header->data_section_offset;
+
+    u64 asset_end = asset_start + asset_table_size;
+    u64 string_end = string_start + header->string_table_size;
+    u64 data_end = data_start + header->data_section_size;
+
+    if (asset_end > file_size) {
+      bun_add_error(ctx, "asset table exceeds file bounds");
+      result = BUN_MALFORMED;
+    }
+
+    if (string_end > file_size) {
+      bun_add_error(ctx, "string table exceeds file bounds");
+      result = BUN_MALFORMED;
+    }
+
+    if (data_end > file_size) {
+      bun_add_error(ctx, "data section exceeds file bounds");
+      result = BUN_MALFORMED;
+    }
+
+    if (asset_start < string_end && string_start < asset_end) {
+      bun_add_error(ctx, "asset table overlaps string table");
+      result = BUN_MALFORMED;
+    }
+
+    if (asset_start < data_end && data_start < asset_end) {
+      bun_add_error(ctx, "asset table overlaps data section");
+      result = BUN_MALFORMED;
+    }
+
+    if (string_start < data_end && data_start < string_end) {
+      bun_add_error(ctx, "string table overlaps data section");
+      result = BUN_MALFORMED;
+    }
+
+    return result;
   }
-
-  // Version check
-  if (header->version_major != 1 || header->version_minor != 0) {
-    return BUN_UNSUPPORTED;
-  }
-
-  // Alignment check (must be divisible by 4)
-  if ((header->asset_table_offset % 4 != 0) ||
-      (header->string_table_offset % 4 != 0) ||
-      (header->data_section_offset % 4 != 0) ||
-      (header->string_table_size % 4 != 0) ||
-      (header->data_section_size % 4 != 0)) {
-    return BUN_MALFORMED;
-  }
-
-  u64 file_size = (u64)ctx->file_size;
-
-  //Compute asset table size safely
-  u64 asset_table_size = (u64)header->asset_count * 48;
-
-  // Section starts 
-  u64 asset_start = header->asset_table_offset;
-  u64 string_start = header->string_table_offset;
-  u64 data_start = header->data_section_offset;
-
-  // Section ends (with overflow protection) 
-  u64 asset_end, string_end, data_end;
-
-  if (asset_start > UINT64_MAX - asset_table_size) {
-      printf("Error: asset table end overflow\n");
-      return BUN_MALFORMED;
-  }
-  asset_end = asset_start + asset_table_size;
-
-  if (string_start > UINT64_MAX - header->string_table_size) {
-      printf("Error: string table end overflow\n");
-      return BUN_MALFORMED;
-  }
-  string_end = string_start + header->string_table_size;
-
-  if (data_start > UINT64_MAX - header->data_section_size) {
-      printf("Error: data section end overflow\n");
-      return BUN_MALFORMED;
-  }
-  data_end = data_start + header->data_section_size;
-
-  //Bounds check
-  if (asset_end > file_size) {
-      printf("Error: asset table exceeds file bounds\n");
-      return BUN_MALFORMED;
-  }
-  if (string_end > file_size) {
-      printf("Error: string table exceeds file bounds\n");
-      return BUN_MALFORMED;
-  }
-  if (data_end > file_size) {
-      printf("Error: data section exceeds file bounds\n");
-      return BUN_MALFORMED;
-  }
-
-  //Overlap checks
-  if (asset_start < string_end && string_start < asset_end) {
-      printf("Error: asset table overlaps string table\n");
-      return BUN_MALFORMED;
-  }
-
-  if (asset_start < data_end && data_start < asset_end) {
-      printf("Error: asset table overlaps data section\n");
-      return BUN_MALFORMED;
-  }
-
-  if (string_start < data_end && data_start < string_end) {
-      printf("Error: string table overlaps data section\n");
-      return BUN_MALFORMED;
-  }
-
-
-
-  return BUN_OK;
-}
 
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
 
@@ -200,6 +202,10 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
 
   return BUN_OK;
 }
+
+
+
+
 
 bun_result_t bun_close(BunParseContext *ctx) {
   assert(ctx->file);
