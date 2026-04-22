@@ -6,6 +6,14 @@
 #include <stdarg.h>
 #include <string.h>
 #include <errno.h>
+#include <stdint.h>
+
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
 
 // Helper: terminate abnormally, after printing a message to stderr
 void die(const char *fmt, ...)
@@ -25,21 +33,104 @@ void die(const char *fmt, ...)
 
 // Helper: open a test fixture by name, relative to the tests/ directory.
 static const char *fixture(const char *filename) {
-    // For simplicity, tests assume they are run from the project root, and
-    // test BUN files live in tests/fixtures/{valid,invalid}. Adjust if needed.
-    static char path[256];
-    int res = snprintf(path, sizeof(path), "tests/fixtures/%s", filename);
-    if (res < 0) {
-      die("snprintf failed: %s", strerror(errno));
-    }
-    if ((size_t) res > sizeof(path)) {
-      die("filename '%s' too big for buffer (would write %d bytes to %zu-size buffer)",
-          filename, res, sizeof(path));
-    }
-    return path;
+  static char path[256];
+  int res = snprintf(path, sizeof(path), "tests/fixtures/%s", filename);
+  if (res < 0) {
+    die("snprintf failed: %s", strerror(errno));
+  }
+  if ((size_t)res >= sizeof(path)) {
+    die("fixture path too long");
+  }
+  return path;
 }
 
-// Example test suite: header parsing
+static void ensure_dir(const char *path) {
+#if defined(_WIN32)
+  _mkdir(path);
+#else
+  mkdir(path, 0777);
+#endif
+}
+
+static void write_file_bytes(const char *path, const uint8_t *buf, size_t n) {
+  FILE *f = fopen(path, "wb");
+  if (!f) {
+    die("open '%s' failed: %s", path, strerror(errno));
+  }
+  if (n && fwrite(buf, 1, n, f) != n) {
+    fclose(f);
+    die("write '%s' failed: %s", path, strerror(errno));
+  }
+  if (fclose(f) != 0) {
+    die("close '%s' failed: %s", path, strerror(errno));
+  }
+}
+
+static void write_u16_le(uint8_t *b, size_t off, uint16_t v) {
+  b[off + 0] = (uint8_t)(v & 0xffu);
+  b[off + 1] = (uint8_t)((v >> 8) & 0xffu);
+}
+
+static void write_u32_le(uint8_t *b, size_t off, uint32_t v) {
+  b[off + 0] = (uint8_t)(v & 0xffu);
+  b[off + 1] = (uint8_t)((v >> 8) & 0xffu);
+  b[off + 2] = (uint8_t)((v >> 16) & 0xffu);
+  b[off + 3] = (uint8_t)((v >> 24) & 0xffu);
+}
+
+static void write_u64_le(uint8_t *b, size_t off, uint64_t v) {
+  b[off + 0] = (uint8_t)(v & 0xffu);
+  b[off + 1] = (uint8_t)((v >> 8) & 0xffu);
+  b[off + 2] = (uint8_t)((v >> 16) & 0xffu);
+  b[off + 3] = (uint8_t)((v >> 24) & 0xffu);
+  b[off + 4] = (uint8_t)((v >> 32) & 0xffu);
+  b[off + 5] = (uint8_t)((v >> 40) & 0xffu);
+  b[off + 6] = (uint8_t)((v >> 48) & 0xffu);
+  b[off + 7] = (uint8_t)((v >> 56) & 0xffu);
+}
+
+static void make_header(uint8_t out[BUN_HEADER_SIZE],
+                        uint32_t magic,
+                        uint16_t vmaj,
+                        uint16_t vmin,
+                        uint32_t asset_count,
+                        uint64_t asset_table_offset,
+                        uint64_t string_table_offset,
+                        uint64_t string_table_size,
+                        uint64_t data_section_offset,
+                        uint64_t data_section_size,
+                        uint64_t reserved) {
+  memset(out, 0, BUN_HEADER_SIZE);
+  size_t off = 0;
+  write_u32_le(out, off, magic); off += 4;
+  write_u16_le(out, off, vmaj); off += 2;
+  write_u16_le(out, off, vmin); off += 2;
+  write_u32_le(out, off, asset_count); off += 4;
+  write_u64_le(out, off, asset_table_offset); off += 8;
+  write_u64_le(out, off, string_table_offset); off += 8;
+  write_u64_le(out, off, string_table_size); off += 8;
+  write_u64_le(out, off, data_section_offset); off += 8;
+  write_u64_le(out, off, data_section_size); off += 8;
+  write_u64_le(out, off, reserved); off += 8;
+}
+
+static void ensure_fixtures(void) {
+  ensure_dir("tests");
+  ensure_dir("tests/fixtures");
+  ensure_dir("tests/fixtures/valid");
+  ensure_dir("tests/fixtures/invalid");
+
+  uint8_t hdr[BUN_HEADER_SIZE];
+
+  make_header(hdr, BUN_MAGIC, 1, 0, 0, 60, 60, 0, 60, 0, 0);
+  write_file_bytes(fixture("valid/01-empty.bun"), hdr, BUN_HEADER_SIZE);
+
+  make_header(hdr, 0x12345678u, 1, 0, 0, 60, 60, 0, 60, 0, 0);
+  write_file_bytes(fixture("invalid/01-bad-magic.bun"), hdr, BUN_HEADER_SIZE);
+
+  make_header(hdr, BUN_MAGIC, 9, 9, 0, 60, 60, 0, 60, 0, 0);
+  write_file_bytes(fixture("invalid/02-bad-version.bun"), hdr, BUN_HEADER_SIZE);
+}
 
 START_TEST(test_valid_minimal) {
     BunParseContext ctx = {0};
@@ -87,18 +178,15 @@ START_TEST(test_unsupported_version) {
 END_TEST
 
 // Assemble a test suite from our tests
-
 static Suite *bun_suite(void) {
     Suite *s = suite_create("bun-suite");
 
-    // Note that "TCase" is more like a sub-suite than a single test case
     TCase *tc_header = tcase_create("header-tests");
+    ensure_fixtures();
     tcase_add_test(tc_header, test_valid_minimal);
     tcase_add_test(tc_header, test_bad_magic);
     tcase_add_test(tc_header, test_unsupported_version);
     suite_add_tcase(s, tc_header);
-
-    // TODO: add further test cases and TCases (e.g. "assets", "compression")
 
     return s;
 }
