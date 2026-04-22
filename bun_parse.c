@@ -47,7 +47,7 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
 }
 
 //to list errors together
-static void bun_add_error(BunParseContext *ctx, const char *fmt, ...) {
+static void bun_add_violation(BunParseContext *ctx, const char *fmt, ...) {
     if (ctx->violation_count == ctx->violation_capacity) {
         size_t new_cap = (ctx->violation_capacity == 0) ? 8 : ctx->violation_capacity * 2;
 
@@ -144,7 +144,7 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
   // 4. VALIDATION
 
   if (header->magic != BUN_MAGIC) {
-      bun_add_error(ctx, "invalid magic number");
+      bun_add_violation(ctx, "invalid magic number");
       result = BUN_MALFORMED;
     }
 
@@ -158,7 +158,7 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
         (header->string_table_size % 4 != 0) ||
         (header->data_section_size % 4 != 0)) {
 
-      bun_add_error(ctx, "unaligned section offset or size");
+      bun_add_violation(ctx, "unaligned section offset or size");
       result = BUN_MALFORMED;
     }
 
@@ -174,32 +174,32 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
     u64 data_end = data_start + header->data_section_size;
 
     if (asset_end > file_size) {
-      bun_add_error(ctx, "asset table exceeds file bounds");
+      bun_add_violation(ctx, "asset table exceeds file bounds");
       result = BUN_MALFORMED;
     }
 
     if (string_end > file_size) {
-      bun_add_error(ctx, "string table exceeds file bounds");
+      bun_add_violation(ctx, "string table exceeds file bounds");
       result = BUN_MALFORMED;
     }
 
     if (data_end > file_size) {
-      bun_add_error(ctx, "data section exceeds file bounds");
+      bun_add_violation(ctx, "data section exceeds file bounds");
       result = BUN_MALFORMED;
     }
 
     if (asset_start < string_end && string_start < asset_end) {
-      bun_add_error(ctx, "asset table overlaps string table");
+      bun_add_violation(ctx, "asset table overlaps string table");
       result = BUN_MALFORMED;
     }
 
     if (asset_start < data_end && data_start < asset_end) {
-      bun_add_error(ctx, "asset table overlaps data section");
+      bun_add_violation(ctx, "asset table overlaps data section");
       result = BUN_MALFORMED;
     }
 
     if (string_start < data_end && data_start < string_end) {
-      bun_add_error(ctx, "string table overlaps data section");
+      bun_add_violation(ctx, "string table overlaps data section");
       result = BUN_MALFORMED;
     }
 
