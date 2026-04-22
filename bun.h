@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stddef.h>
 
 //
 // Result codes (per BUN spec section 2)
@@ -72,6 +73,18 @@ typedef struct {
 } BunAssetRecord;
 
 //
+// Violation storage
+//
+// Used to store one human-readable validation message at a time.
+// Keeping each message fixed-size makes the implementation simpler.
+//
+
+typedef struct {
+    char message[256];   // one recorded violation message
+} BunViolation;
+
+
+//
 // Expected on-disk sizes -- these can be used in assertions or static_asserts.
 //
 
@@ -88,10 +101,20 @@ typedef struct {
 //
 
 typedef struct {
-    FILE   *file;           // open file handle
-    long    file_size;      // total file size in bytes
-    BunErrorList errors;
-    // add further fields here as needed
+    FILE   *file;                // open file handle
+    long    file_size;           // total file size in bytes
+
+    BunHeader header;            // parsed header, stored in ctx for later use
+    int      header_parsed;      // whether the header has been successfully parsed
+
+    BunAssetRecord *assets;      // dynamically allocated array of parsed asset records
+    u32      parsed_asset_count; // number of asset records stored in assets
+
+    BunViolation *violations;    // dynamically allocated array of violation messages
+    size_t   violation_count;    // number of recorded violations
+    size_t   violation_capacity; // current capacity of the violations array
+
+    BunErrorList errors;         // error list (from parse_header branch)
 } BunParseContext;
 
 //
@@ -137,6 +160,18 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header);
  * records to the caller.
  */
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header);
+
+/**
+ * Record a formatted human-readable violation message in ctx.
+ * This lets parsing code report detailed problems without printing directly.
+ */
+bun_result_t bun_add_violation(BunParseContext *ctx, const char *fmt, ...);
+
+/**
+ * Free any dynamically allocated memory stored in ctx
+ * (for example, parsed asset records and violation messages).
+ */
+void bun_free_context(BunParseContext *ctx);
 
 /**
  * Close the file handle in ctx. Must only be called on a BunParseContext
