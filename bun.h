@@ -55,9 +55,8 @@ typedef struct {
 } BunHeader;
 
 typedef struct {
-    char messages[BUN_MAX_ERRORS][BUN_ERROR_MSG_LEN];
-    int count;
-} BunErrorList; //for listing violations or errors
+    char message[256];
+} BunViolation; //for listing violations or errors
 
 typedef struct {
     u32 name_offset;
@@ -88,10 +87,18 @@ typedef struct {
 //
 
 typedef struct {
-    FILE   *file;           // open file handle
-    long    file_size;      // total file size in bytes
-    BunErrorList errors;
-    // add further fields here as needed
+    FILE   *file;
+    long    file_size;
+
+    BunHeader header;
+    int header_parsed;
+
+    BunAssetRecord *assets;
+    u32 parsed_asset_count;
+
+    BunViolation *violations;
+    size_t violation_count;
+    size_t violation_capacity;
 } BunParseContext;
 
 //

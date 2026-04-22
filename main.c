@@ -24,8 +24,8 @@ int main(int argc, char *argv[]) {
   
 
   if (result != BUN_OK) {
-    for (int i = 0; i < ctx.errors.count; i++) {
-      fprintf(stderr, "%s\n", ctx.errors.messages[i]);
+    for (size_t i = 0; i < ctx.violation_count; i++) {
+        fprintf(stderr, "%s\n", ctx.violations[i].message);
     }
 
     fprintf(stderr, "Error: header invalid or unsupported (code %d)\n", result);

@@ -48,22 +48,32 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
 
 //to list errors together
 static void bun_add_error(BunParseContext *ctx, const char *fmt, ...) {
-    if (ctx->errors.count >= BUN_MAX_ERRORS)
-        return;
+    if (ctx->violation_count == ctx->violation_capacity) {
+        size_t new_cap = (ctx->violation_capacity == 0) ? 8 : ctx->violation_capacity * 2;
+
+        BunViolation *new_block =
+            realloc(ctx->violations, new_cap * sizeof(BunViolation));
+
+        if (!new_block)
+            return; // fail silently 
+
+        ctx->violations = new_block;
+        ctx->violation_capacity = new_cap;
+    }
 
     va_list args;
     va_start(args, fmt);
 
     vsnprintf(
-        ctx->errors.messages[ctx->errors.count],
-        BUN_ERROR_MSG_LEN,
+        ctx->violations[ctx->violation_count].message,
+        256,
         fmt,
         args
     );
 
     va_end(args);
 
-    ctx->errors.count++;
+    ctx->violation_count++;
 }
 
 
