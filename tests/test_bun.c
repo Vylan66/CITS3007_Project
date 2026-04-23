@@ -15,7 +15,6 @@
 #include <sys/types.h>
 #endif
 
-// Helper: terminate abnormally, after printing a message to stderr
 void die(const char *fmt, ...)
 {
   va_list args;
@@ -31,7 +30,6 @@ void die(const char *fmt, ...)
 }
 
 
-// Helper: open a test fixture by name, relative to the tests/ directory.
 static const char *fixture(const char *filename) {
   static char path[256];
   int res = snprintf(path, sizeof(path), "tests/fixtures/%s", filename);
@@ -50,6 +48,30 @@ static void ensure_dir(const char *path) {
 #else
   mkdir(path, 0777);
 #endif
+}
+
+static int generate_fixtures_with_python(void) {
+#if defined(_WIN32)
+  const char *commands[] = {
+    "py -3 bunfile_generator.py --header-fixtures tests/fixtures",
+    "python bunfile_generator.py --header-fixtures tests/fixtures",
+    "python3 bunfile_generator.py --header-fixtures tests/fixtures",
+  };
+#else
+  const char *commands[] = {
+    "python3 bunfile_generator.py --header-fixtures tests/fixtures",
+    "python bunfile_generator.py --header-fixtures tests/fixtures",
+  };
+#endif
+
+  size_t command_count = sizeof(commands) / sizeof(commands[0]);
+  for (size_t i = 0; i < command_count; i++) {
+    if (system(commands[i]) == 0) {
+      return 1;
+    }
+  }
+
+  return 0;
 }
 
 static void write_file_bytes(const char *path, const uint8_t *buf, size_t n) {
@@ -119,6 +141,10 @@ static void ensure_fixtures(void) {
   ensure_dir("tests/fixtures");
   ensure_dir("tests/fixtures/valid");
   ensure_dir("tests/fixtures/invalid");
+
+  if (generate_fixtures_with_python()) {
+    return;
+  }
 
   uint8_t hdr[BUN_HEADER_SIZE];
 
@@ -248,6 +274,7 @@ START_TEST(test_unsupported_version) {
 END_TEST
 
 // Assemble a test suite from our tests
+
 static Suite *bun_suite(void) {
     Suite *s = suite_create("bun-suite");
 
@@ -269,8 +296,6 @@ int main(void) {
     Suite   *s  = bun_suite();
     SRunner *sr = srunner_create(s);
 
-    // see https://libcheck.github.io/check/doc/check_html/check_3.html#SRunner-Output for different output options.
-    // e.g. pass CK_VERBOSE if you want to see successes as well as failures.
     srunner_run_all(sr, CK_NORMAL);
     int failed = srunner_ntests_failed(sr);
     srunner_free(sr);
