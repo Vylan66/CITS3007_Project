@@ -18,6 +18,17 @@ static u32 read_u32_le(const u8 *buf, size_t offset) {
      | (u32)buf[offset + 3] << 24;
 }
 
+static u64 read_u64_le(const u8 *buf, size_t offset) {
+    return ((u64)buf[offset])
+         | ((u64)buf[offset + 1] << 8)
+         | ((u64)buf[offset + 2] << 16)
+         | ((u64)buf[offset + 3] << 24)
+         | ((u64)buf[offset + 4] << 32)
+         | ((u64)buf[offset + 5] << 40)
+         | ((u64)buf[offset + 6] << 48)
+         | ((u64)buf[offset + 7] << 56);
+}
+
 // Read one asset name from the string table.
 // Assumes the asset's name_offset and name_length have already been validated.
 static bun_result_t bun_read_asset_name(
@@ -251,10 +262,108 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
   }
 
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
+    u32 i;
 
-  // TODO: implement asset record parsing and validation
+    if (ctx == NULL || header == NULL) {
+        return BUN_ERR_IO;
+    }
 
-  return BUN_OK;
+    ctx->assets = NULL;
+    ctx->asset_names = NULL;
+    ctx->parsed_asset_count = 0;
+
+    // No assets → nothing to do
+    if (header->asset_count == 0) {
+        return BUN_OK;
+    }
+
+    // Allocate storage for parsed asset records
+    ctx->assets = calloc(header->asset_count, sizeof(BunAssetRecord));
+    if (ctx->assets == NULL) {
+        return BUN_ERR_IO;
+    }
+
+    // Allocate storage for asset name pointers
+    ctx->asset_names = calloc(header->asset_count, sizeof(char *));
+    if (ctx->asset_names == NULL) {
+        free(ctx->assets);
+        ctx->assets = NULL;
+        return BUN_ERR_IO;
+    }
+
+    // Ensure offset is safe to cast to long for fseek
+    if (header->asset_table_offset > (u64)LONG_MAX) {
+        free(ctx->asset_names);
+        free(ctx->assets);
+        ctx->asset_names = NULL;
+        ctx->assets = NULL;
+        return BUN_ERR_IO;
+    }
+
+    // Seek to the start of the asset table
+    if (fseek(ctx->file, (long)header->asset_table_offset, SEEK_SET) != 0) {
+        free(ctx->asset_names);
+        free(ctx->assets);
+        ctx->asset_names = NULL;
+        ctx->assets = NULL;
+        return BUN_ERR_IO;
+    }
+
+    // Iterate over each asset record
+    for (i = 0; i < header->asset_count; i++) {
+        BunAssetRecord *asset = &ctx->assets[i];
+        u8 buf[BUN_ASSET_RECORD_SIZE];
+        bun_result_t name_result;
+
+        // Read raw asset record bytes from file
+        if (fread(buf, 1, BUN_ASSET_RECORD_SIZE, ctx->file) != BUN_ASSET_RECORD_SIZE) {
+            /* TODO A1: read asset records safely (handle malformed/truncated files) */
+            goto fail_io;
+        }
+
+        // Decode little-endian fields into struct
+        asset->name_offset       = read_u32_le(buf, 0);
+        asset->name_length       = read_u32_le(buf, 4);
+        asset->data_offset       = read_u64_le(buf, 8);
+        asset->data_size         = read_u64_le(buf, 16);
+        asset->uncompressed_size = read_u64_le(buf, 24);
+        asset->compression       = read_u32_le(buf, 32);
+        asset->type              = read_u32_le(buf, 36);
+        asset->checksum          = read_u32_le(buf, 40);
+        asset->flags             = read_u32_le(buf, 44);
+
+        ctx->parsed_asset_count++;
+
+        // Future validation tasks 
+        /* TODO A2: validate name bounds */
+        /* TODO A3: validate name rules */
+        /* TODO A4: validate data bounds */
+        /* TODO A5: validate unsupported checksum handling */
+        /* TODO A6: validate flags */
+
+        // Load asset name from string table using helper (D1b)
+        name_result = bun_read_asset_name(ctx, header, asset, &ctx->asset_names[i]);
+        if (name_result != BUN_OK) {
+            goto fail_io;
+        }
+    }
+
+    return BUN_OK;
+
+fail_io:
+    // Clean up partially allocated data on failure
+    for (i = 0; i < header->asset_count; i++) {
+        free(ctx->asset_names[i]);
+        ctx->asset_names[i] = NULL;
+    }
+
+    free(ctx->asset_names);
+    free(ctx->assets);
+    ctx->asset_names = NULL;
+    ctx->assets = NULL;
+    ctx->parsed_asset_count = 0;
+
+    return BUN_ERR_IO;
 }
 
 
