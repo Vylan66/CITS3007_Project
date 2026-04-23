@@ -130,6 +130,20 @@ static void ensure_fixtures(void) {
 
   make_header(hdr, BUN_MAGIC, 9, 9, 0, 60, 60, 0, 60, 0, 0);
   write_file_bytes(fixture("invalid/02-bad-version.bun"), hdr, BUN_HEADER_SIZE);
+
+  make_header(hdr, BUN_MAGIC, 1, 0, 0, 60, 60, 0, 60, 0, 0);
+  write_file_bytes(fixture("invalid/03-truncated-header.bun"), hdr, BUN_HEADER_SIZE - 1);
+
+  make_header(hdr, BUN_MAGIC, 1, 0, 0, 62, 60, 0, 60, 0, 0);
+  write_file_bytes(fixture("invalid/04-unaligned-offset.bun"), hdr, BUN_HEADER_SIZE);
+
+  make_header(hdr, BUN_MAGIC, 1, 0, 1, 60, 60, 0, 60, 0, 0);
+  write_file_bytes(fixture("invalid/05-asset-table-oob.bun"), hdr, BUN_HEADER_SIZE);
+
+  uint8_t file64[64];
+  make_header(file64, BUN_MAGIC, 1, 0, 0, 60, 56, 8, 60, 0, 0);
+  memset(file64 + BUN_HEADER_SIZE, 0, sizeof(file64) - BUN_HEADER_SIZE);
+  write_file_bytes(fixture("invalid/06-overlap-sections.bun"), file64, sizeof(file64));
 }
 
 START_TEST(test_valid_minimal) {
@@ -144,6 +158,62 @@ START_TEST(test_valid_minimal) {
     ck_assert_uint_eq(header.magic, BUN_MAGIC);
     ck_assert_uint_eq(header.version_major, 1);
     ck_assert_uint_eq(header.version_minor, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_truncated_header) {
+    BunParseContext ctx = {0};
+    BunHeader header    = {0};
+
+    bun_result_t r = bun_open(fixture("invalid/03-truncated-header.bun"), &ctx);
+    ck_assert_int_eq(r, BUN_OK);
+
+    r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_unaligned_offset) {
+    BunParseContext ctx = {0};
+    BunHeader header    = {0};
+
+    bun_result_t r = bun_open(fixture("invalid/04-unaligned-offset.bun"), &ctx);
+    ck_assert_int_eq(r, BUN_OK);
+
+    r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_asset_table_oob) {
+    BunParseContext ctx = {0};
+    BunHeader header    = {0};
+
+    bun_result_t r = bun_open(fixture("invalid/05-asset-table-oob.bun"), &ctx);
+    ck_assert_int_eq(r, BUN_OK);
+
+    r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_section_overlap) {
+    BunParseContext ctx = {0};
+    BunHeader header    = {0};
+
+    bun_result_t r = bun_open(fixture("invalid/06-overlap-sections.bun"), &ctx);
+    ck_assert_int_eq(r, BUN_OK);
+
+    r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
 
     bun_close(&ctx);
 }
@@ -186,6 +256,10 @@ static Suite *bun_suite(void) {
     tcase_add_test(tc_header, test_valid_minimal);
     tcase_add_test(tc_header, test_bad_magic);
     tcase_add_test(tc_header, test_unsupported_version);
+    tcase_add_test(tc_header, test_truncated_header);
+    tcase_add_test(tc_header, test_unaligned_offset);
+    tcase_add_test(tc_header, test_asset_table_oob);
+    tcase_add_test(tc_header, test_section_overlap);
     suite_add_tcase(s, tc_header);
 
     return s;
