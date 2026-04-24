@@ -4,6 +4,43 @@
 
 #include "bun.h"
 
+static void print_header(const BunHeader *header) {
+    printf("Header:\n");
+    printf("  magic: 0x%08" PRIx32 "\n", header->magic);
+    printf("  version_major: %" PRIu16 "\n", header->version_major);
+    printf("  version_minor: %" PRIu16 "\n", header->version_minor);
+    printf("  asset_count: %" PRIu32 "\n", header->asset_count);
+    printf("  asset_table_offset: %" PRIu64 "\n", header->asset_table_offset);
+    printf("  string_table_offset: %" PRIu64 "\n", header->string_table_offset);
+    printf("  string_table_size: %" PRIu64 "\n", header->string_table_size);
+    printf("  data_section_offset: %" PRIu64 "\n", header->data_section_offset);
+    printf("  data_section_size: %" PRIu64 "\n", header->data_section_size);
+    printf("  reserved: %" PRIu64 "\n", header->reserved);
+}
+
+static void print_assets(const BunParseContext *ctx) {
+    printf("\nAssets:\n");
+
+    for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
+        const BunAssetRecord *asset = &ctx->assets[i];
+
+        printf("  Asset %" PRIu32 ":\n", i);
+        printf("    name: %s\n",
+               ctx->asset_names != NULL && ctx->asset_names[i] != NULL
+                   ? ctx->asset_names[i]
+                   : "(not loaded)");
+        printf("    name_offset: %" PRIu32 "\n", asset->name_offset);
+        printf("    name_length: %" PRIu32 "\n", asset->name_length);
+        printf("    data_offset: %" PRIu64 "\n", asset->data_offset);
+        printf("    data_size: %" PRIu64 "\n", asset->data_size);
+        printf("    uncompressed_size: %" PRIu64 "\n", asset->uncompressed_size);
+        printf("    compression: %" PRIu32 "\n", asset->compression);
+        printf("    type: %" PRIu32 "\n", asset->type);
+        printf("    checksum: %" PRIu32 "\n", asset->checksum);
+        printf("    flags: %" PRIu32 "\n", asset->flags);
+    }
+}
+
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <file.bun>\n", argv[0]);
@@ -34,22 +71,16 @@ int main(int argc, char *argv[]) {
     return result;
   }
 
-  printf("Magic: 0x%x\n", header.magic);
-  printf("Version: %u.%u\n", header.version_major, header.version_minor);
-  printf("Asset count: %u\n", header.asset_count);
-  printf("Asset table offset: %" PRIu64 "\n", header.asset_table_offset);
-  printf("String table offset: %" PRIu64 "\n", header.string_table_offset);
-  printf("Data section offset: %" PRIu64 "\n", header.data_section_offset);
-
-
   result = bun_parse_assets(&ctx, &header);
-  // TODO: implement asset record parsing
-  
+  if (result != BUN_OK) {
+      fprintf(stderr, "Error: asset parsing failed (code %d)\n", result);
+      bun_close(&ctx);
+      return result;
+  }
 
-  // TODO: on BUN_OK, print human-readable summary to stdout.
-  //     on BUN_MALFORMED / BUN_UNSUPPORTED, print violation list to stderr.
-  //     See project brief for output requirements.
+  print_header(&header);
+  print_assets(&ctx);
 
   bun_close(&ctx);
-  return result;
+  return BUN_OK;
 }
