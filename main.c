@@ -41,6 +41,12 @@ static void print_assets(const BunParseContext *ctx) {
     }
 }
 
+static void print_violations(const BunParseContext *ctx) {
+    for (size_t i = 0; i < ctx->violation_count; i++) {
+        fprintf(stderr, "%s\n", ctx->violations[i].message);
+    }
+}
+
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <file.bun>\n", argv[0]);
@@ -61,19 +67,14 @@ int main(int argc, char *argv[]) {
   
 
   if (result != BUN_OK) {
-    for (size_t i = 0; i < ctx.violation_count; i++) {
-        fprintf(stderr, "%s\n", ctx.violations[i].message);
-    }
-
-    fprintf(stderr, "Error: header invalid or unsupported (code %d)\n", result);
-
+    print_violations(&ctx);
     bun_close(&ctx);
     return result;
   }
 
   result = bun_parse_assets(&ctx, &header);
   if (result != BUN_OK) {
-      fprintf(stderr, "Error: asset parsing failed (code %d)\n", result);
+      print_violations(&ctx);
       bun_close(&ctx);
       return result;
   }
