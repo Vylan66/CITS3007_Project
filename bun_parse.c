@@ -1,4 +1,6 @@
 #define _LARGEFILE64_SOURCE // TODO: check if this is entirely necessary. See: man fseeko, man lseek
+#define _POSIX_C_SOURCE 200809L
+#define TMPDIR_TEMPLATE "/tmp/bunproc.XXXXXXXXXX"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +9,10 @@
 #include <sys/types.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "bun.h"
 
@@ -145,6 +151,72 @@ bun_result_t bun_read_data(BunHeader *header, BunParseContext *ctx, BunAssetReco
   }
 
   return BUN_OK;
+}
+
+static int create_secure_tmpdir(char **out_path) {
+    char tmpl[] = TMPDIR_TEMPLATE;
+
+    mode_t old_mask = umask(0077);
+    char *d = mkdtemp(tmpl); // 0700 drwx------ by default.
+    umask(old_mask);
+    
+    if (!d) { return -1; }
+
+    // set 0700 to be doubly sure, in case a race condition makes umask different globally.
+    if (chmod(d, S_IRWXU) != 0) {
+        int saved_errno = errno;
+        rmdir(d);
+        errno = saved_errno;
+        return -1;
+    }
+
+    *out_path = strdup(d);
+    if (!*out_path) {
+        rmdir(d);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int create_secure_tmpfile_in_dir(const char *dir_path, FILE **out_fp) {
+    char path[PATH_MAX]; // TODO: POSIX-only behaviour. Take down #define _POSIX_C_SOURCE 200809L if swapping to multi-OS. 
+    int fd = -1;
+    FILE *fp = NULL;
+
+    if (!dir_path || !out_fp) { return -1; }
+
+    if (snprintf(path, sizeof(path), "%s/asset.XXXXXX", dir_path) >= (int)sizeof(path)) { return -1; }
+
+    mode_t old_mask = umask(0077); // umask needed for default
+    fd = mkstemp(path); // 0600 rw------- by default
+    umask(old_mask);
+
+    if (fd < 0) { return -1; }
+
+    // set 0600 to be doubly sure, in case a race condition makes umask different globally.
+    if (fchmod(fd, S_IRUSR | S_IWUSR) != 0) { 
+        close(fd);
+        unlink(path);
+        return -1;
+    }
+
+    /* Convert to buffered I/O stream */
+    fp = fdopen(fd, "wb+");
+    if (!fp) {
+        close(fd);
+        unlink(path);
+        return -1;
+    }
+
+    // unlink. File will close once fp is closed.
+    if (unlink(path) != 0) { 
+        fclose(fp);
+        return -1;
+    }
+
+    *out_fp = fp;
+    return 0;
 }
 
 //
