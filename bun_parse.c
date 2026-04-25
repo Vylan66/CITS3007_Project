@@ -291,6 +291,8 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         return BUN_ERR_IO;
     }
 
+    // TODO: TOCTOU possibility to swap out the file here. Use fd via fileno(). See lect 7 "file-descriptor–based functions".
+
     // Seek to the start of the asset table
     if (fseek(ctx->file, (long)header->asset_table_offset, SEEK_SET) != 0) {
         free(ctx->asset_names);
