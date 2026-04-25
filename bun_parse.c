@@ -86,7 +86,7 @@ static bun_result_t bun_read_asset_name(
     return BUN_OK;
 }
 
-bun_result_t bun_read_data(BunHeader *header, BunParseContext *ctx, BunAssetRecord *entry, FILE *out_fptr) {
+bun_result_t bun_read_data(const BunHeader *header, BunParseContext *ctx, BunAssetRecord *entry, FILE *out_fptr) {
   // FUNCTION: take in a single asset record and output the decompressed version into *out_fptr.
   // ENSURE THE FILE POINTER IS SECURE. ANYONE WITH THE SAME PERMS MAY READ IT OTHERWISE.
   // See tmpfile() and the lecture/lab content on this.
@@ -396,6 +396,7 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
 
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
     u32 i;
+    char *tmpdir_path = NULL;
 
     if (ctx == NULL || header == NULL) {
         return BUN_ERR_IO;
@@ -410,45 +411,29 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         return BUN_OK;
     }
 
-    // Allocate storage for parsed asset records
-    ctx->assets = calloc(header->asset_count, sizeof(BunAssetRecord));
-    if (ctx->assets == NULL) {
+    // No secure directory → nowhere to put temp files
+    if (create_secure_tmpdir(&tmpdir_path) != 0) {
         return BUN_ERR_IO;
     }
 
-    // Allocate storage for asset name pointers
-    ctx->asset_names = calloc(header->asset_count, sizeof(char *));
-    if (ctx->asset_names == NULL) {
-        free(ctx->assets);
-        ctx->assets = NULL;
-        return BUN_ERR_IO;
-    }
+    // Allocate storage
+    ctx->assets = (BunAssetRecord *) calloc(header->asset_count, sizeof(BunAssetRecord));
+    ctx->asset_names = (char **) calloc(header->asset_count, sizeof(char *));
+    ctx->asset_files = (FILE **) calloc(header->asset_count, sizeof(FILE *));
+
+    if (!ctx->assets || !ctx->asset_names || !ctx->asset_files) { goto fail_io; }
 
     // Ensure offset is safe to cast to long for fseek
-    if (header->asset_table_offset > (u64)LONG_MAX) {
-        free(ctx->asset_names);
-        free(ctx->assets);
-        ctx->asset_names = NULL;
-        ctx->assets = NULL;
-        return BUN_ERR_IO;
-    }
-
+    if (header->asset_table_offset > (u64)LONG_MAX) { goto fail_io; }
     // TODO: TOCTOU possibility to swap out the file here. Use fd via fileno(). See lect 7 "file-descriptor–based functions".
 
     // Seek to the start of the asset table
-    if (fseek(ctx->file, (long)header->asset_table_offset, SEEK_SET) != 0) {
-        free(ctx->asset_names);
-        free(ctx->assets);
-        ctx->asset_names = NULL;
-        ctx->assets = NULL;
-        return BUN_ERR_IO;
-    }
+    if (fseek(ctx->file, (long)header->asset_table_offset, SEEK_SET) != 0) { goto fail_io; }
 
     // Iterate over each asset record
     for (i = 0; i < header->asset_count; i++) {
         BunAssetRecord *asset = &ctx->assets[i];
         u8 buf[BUN_ASSET_RECORD_SIZE];
-        bun_result_t name_result;
 
         // Read raw asset record bytes from file
         if (fread(buf, 1, BUN_ASSET_RECORD_SIZE, ctx->file) != BUN_ASSET_RECORD_SIZE) {
@@ -477,15 +462,29 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         /* TODO A6: validate flags */
 
         // Load asset name from string table using helper (D1b)
-        name_result = bun_read_asset_name(ctx, header, asset, &ctx->asset_names[i]);
-        if (name_result != BUN_OK) {
-            goto fail_io;
-        }
+        if (bun_read_asset_name(ctx, header, asset, &ctx->asset_names[i]) != BUN_OK) { goto fail_io; }
+        if (create_secure_tmpfile_in_dir(tmpdir_path, &ctx->asset_files[i]) != 0) { goto fail_io; }
+        if (bun_read_data(header, ctx, asset, ctx->asset_files[i]) != BUN_OK) { goto fail_io; }
+
+        // Seek back to beginning of file so it's ready for the user to read
+        rewind(ctx->asset_files[i]);
     }
 
+    free(tmpdir_path); // the PATH can be freed, but not the file or directory.
     return BUN_OK;
 
 fail_io:
+    // TODO: should header->asset_count be header->parsed_asset_count?
+    // Close any opened temp files
+    if (ctx->asset_files) {
+        for (i = 0; i < header->asset_count; ++i) {
+            fclose(ctx->asset_files[i]);
+            ctx->asset_files[i] = NULL;
+        }
+        free(ctx->asset_files);
+        ctx->asset_files = NULL;
+    }
+
     // Clean up partially allocated data on failure
     for (i = 0; i < header->asset_count; i++) {
         free(ctx->asset_names[i]);

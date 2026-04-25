@@ -97,6 +97,8 @@ typedef struct {
     u32      parsed_asset_count; // number of asset records stored in assets
     char   **asset_names;        // dynamically allocated array of parsed asset names
 
+    FILE  **asset_files;
+
     BunViolation *violations;
     size_t violation_count;
     size_t violation_capacity;
