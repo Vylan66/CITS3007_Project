@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stddef.h>
 
 //
 // Result codes (per BUN spec section 2)

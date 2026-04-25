@@ -58,7 +58,7 @@ static void print_parse_error(const BunParseContext *ctx, const char *fallback) 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <file.bun>\n", argv[0]);
-    return BUN_ERR_IO;
+    return BUN_ERR_USAGE;
   }
   const char *path = argv[1];
 
