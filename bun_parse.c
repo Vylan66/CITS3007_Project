@@ -5,6 +5,7 @@
 #include <string.h>
 #include <assert.h>
 #include <sys/types.h>
+#include <limits.h>
 #include <stdarg.h>
 
 #include "bun.h"
@@ -13,11 +14,70 @@
  * Example helper: convert 4 bytes in `buf`, positioned at `offset`,
  * into a little-endian u32.
  */
+static u16 read_u16_le(const u8 *buf, size_t offset) {
+    return (u16)((u16)buf[offset]
+         | ((u16)buf[offset + 1] << 8));
+}
+
 static u32 read_u32_le(const u8 *buf, size_t offset) {
   return (u32)buf[offset]
-     | (u32)buf[offset + 1] << 8
-     | (u32)buf[offset + 2] << 16
-     | (u32)buf[offset + 3] << 24;
+       | (u32)buf[offset + 1] << 8
+       | (u32)buf[offset + 2] << 16
+       | (u32)buf[offset + 3] << 24;
+}
+
+static u64 read_u64_le(const u8 *buf, size_t offset) {
+    return ((u64)buf[offset])
+         | ((u64)buf[offset + 1] << 8)
+         | ((u64)buf[offset + 2] << 16)
+         | ((u64)buf[offset + 3] << 24)
+         | ((u64)buf[offset + 4] << 32)
+         | ((u64)buf[offset + 5] << 40)
+         | ((u64)buf[offset + 6] << 48)
+         | ((u64)buf[offset + 7] << 56);
+}
+
+// Read one asset name from the string table.
+// Assumes the asset's name_offset and name_length have already been validated.
+static bun_result_t bun_read_asset_name(
+    BunParseContext *ctx,
+    const BunHeader *header,
+    const BunAssetRecord *asset,
+    char **out_name
+) {
+    u64 file_offset = header->string_table_offset + asset->name_offset;
+    size_t name_len = (size_t) asset->name_length;
+    char *name = NULL;
+
+    if (out_name == NULL) {
+        return BUN_ERR_IO;
+    }
+
+    *out_name = NULL;
+
+    if (file_offset > (u64) LONG_MAX) {
+        return BUN_ERR_IO;
+    }
+
+    name = (char *) malloc(name_len + 1);
+    if (name == NULL) {
+        return BUN_ERR_IO;
+    }
+
+    if (fseek(ctx->file, (long) file_offset, SEEK_SET) != 0) {
+        free(name);
+        return BUN_ERR_IO;
+    }
+
+    if (fread(name, 1, name_len, ctx->file) != name_len) {
+        free(name);
+        return BUN_ERR_IO;
+    }
+
+    name[name_len] = '\0';
+    *out_name = name;
+
+    return BUN_OK;
 }
 
 bun_result_t bun_read_data(BunHeader *header, BunParseContext *ctx, BunAssetRecord *entry, FILE *out_fptr) {
@@ -122,7 +182,7 @@ static void bun_add_violation(BunParseContext *ctx, const char *fmt, ...) {
         size_t new_cap = (ctx->violation_capacity == 0) ? 8 : ctx->violation_capacity * 2;
 
         BunViolation *new_block =
-            realloc(ctx->violations, new_cap * sizeof(BunViolation));
+            (BunViolation *) realloc(ctx->violations, new_cap * sizeof(BunViolation));
 
         if (!new_block)
             return; // fail silently 
@@ -164,51 +224,37 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
     return BUN_ERR_IO;
   }
 
-  // Helper for u16
-  #define READ_U16_LE(b, off) ((u16)(b[off] | (b[off+1] << 8)))
-
-  // Helper for u64
-  #define READ_U64_LE(b, off) \
-    ((u64)b[off] \
-    | (u64)b[off+1] << 8 \
-    | (u64)b[off+2] << 16 \
-    | (u64)b[off+3] << 24 \
-    | (u64)b[off+4] << 32 \
-    | (u64)b[off+5] << 40 \
-    | (u64)b[off+6] << 48 \
-    | (u64)b[off+7] << 56)
-
   // 3. Populate header (read fields in order)
   size_t off = 0;
 
   header->magic = read_u32_le(buf, off);
   off += 4;
 
-  header->version_major = READ_U16_LE(buf, off);
+  header->version_major = read_u16_le(buf, off);
   off += 2;
 
-  header->version_minor = READ_U16_LE(buf, off);
+  header->version_minor = read_u16_le(buf, off);
   off += 2;
 
   header->asset_count = read_u32_le(buf, off);
   off += 4;
 
-  header->asset_table_offset = READ_U64_LE(buf, off);
+  header->asset_table_offset = read_u64_le(buf, off);
   off += 8;
 
-  header->string_table_offset = READ_U64_LE(buf, off);
+  header->string_table_offset = read_u64_le(buf, off);
   off += 8;
 
-  header->string_table_size = READ_U64_LE(buf, off);
+  header->string_table_size = read_u64_le(buf, off);
   off += 8;
 
-  header->data_section_offset = READ_U64_LE(buf, off);
+  header->data_section_offset = read_u64_le(buf, off);
   off += 8;
 
-  header->data_section_size = READ_U64_LE(buf, off);
+  header->data_section_size = read_u64_le(buf, off);
   off += 8;
 
-  header->reserved = READ_U64_LE(buf, off);
+  header->reserved = read_u64_le(buf, off);
   off += 8;
 
   // 4. VALIDATION
@@ -277,21 +323,110 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
   }
 
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
-  // TODO: implement asset record parsing and validation
-  
-  // RELEVANT VALIDATIONS
-  // At position asset_table_offset, there must be asset_count many valid Asset Entry Table records.
-  // No two file sections may overlap (either a.offset + a.size <= b.start or b.offset + b.size <= a.start)
+    u32 i;
 
-  // Calculate the size of the asset entry table = BunHeader->AssetCount * sizeof(BunAssetRecord)
-  // Allocate space for an array of BunAssetRecord structs this large. Make sure you don't run out of memory.
-  // Nove BunParseContext->file to BunHeader->asset_table_offset
-  // Loop for BunHeader->AssetCount times
-      // if (fread(&BunAssetRecord->X, sizeof(Y), 1, fp) != 1) return -1; where X is a field and Y is the size of the field.
-      // NOTE: read each section in little-endian
-  // validate that you have AssetCount number of assets
+    if (ctx == NULL || header == NULL) {
+        return BUN_ERR_IO;
+    }
 
-  return BUN_OK;
+    ctx->assets = NULL;
+    ctx->asset_names = NULL;
+    ctx->parsed_asset_count = 0;
+
+    // No assets → nothing to do
+    if (header->asset_count == 0) {
+        return BUN_OK;
+    }
+
+    // Allocate storage for parsed asset records
+    ctx->assets = calloc(header->asset_count, sizeof(BunAssetRecord));
+    if (ctx->assets == NULL) {
+        return BUN_ERR_IO;
+    }
+
+    // Allocate storage for asset name pointers
+    ctx->asset_names = calloc(header->asset_count, sizeof(char *));
+    if (ctx->asset_names == NULL) {
+        free(ctx->assets);
+        ctx->assets = NULL;
+        return BUN_ERR_IO;
+    }
+
+    // Ensure offset is safe to cast to long for fseek
+    if (header->asset_table_offset > (u64)LONG_MAX) {
+        free(ctx->asset_names);
+        free(ctx->assets);
+        ctx->asset_names = NULL;
+        ctx->assets = NULL;
+        return BUN_ERR_IO;
+    }
+
+    // TODO: TOCTOU possibility to swap out the file here. Use fd via fileno(). See lect 7 "file-descriptor–based functions".
+
+    // Seek to the start of the asset table
+    if (fseek(ctx->file, (long)header->asset_table_offset, SEEK_SET) != 0) {
+        free(ctx->asset_names);
+        free(ctx->assets);
+        ctx->asset_names = NULL;
+        ctx->assets = NULL;
+        return BUN_ERR_IO;
+    }
+
+    // Iterate over each asset record
+    for (i = 0; i < header->asset_count; i++) {
+        BunAssetRecord *asset = &ctx->assets[i];
+        u8 buf[BUN_ASSET_RECORD_SIZE];
+        bun_result_t name_result;
+
+        // Read raw asset record bytes from file
+        if (fread(buf, 1, BUN_ASSET_RECORD_SIZE, ctx->file) != BUN_ASSET_RECORD_SIZE) {
+            /* TODO A1: read asset records safely (handle malformed/truncated files) */
+            goto fail_io;
+        }
+
+        // Decode little-endian fields into struct
+        asset->name_offset       = read_u32_le(buf, 0);
+        asset->name_length       = read_u32_le(buf, 4);
+        asset->data_offset       = read_u64_le(buf, 8);
+        asset->data_size         = read_u64_le(buf, 16);
+        asset->uncompressed_size = read_u64_le(buf, 24);
+        asset->compression       = read_u32_le(buf, 32);
+        asset->type              = read_u32_le(buf, 36);
+        asset->checksum          = read_u32_le(buf, 40);
+        asset->flags             = read_u32_le(buf, 44);
+
+        ctx->parsed_asset_count++;
+
+        // Future validation tasks 
+        /* TODO A2: validate name bounds */
+        /* TODO A3: validate name rules */
+        /* TODO A4: validate data bounds */
+        /* TODO A5: validate unsupported checksum handling */
+        /* TODO A6: validate flags */
+
+        // Load asset name from string table using helper (D1b)
+        name_result = bun_read_asset_name(ctx, header, asset, &ctx->asset_names[i]);
+        if (name_result != BUN_OK) {
+            goto fail_io;
+        }
+    }
+
+    return BUN_OK;
+
+fail_io:
+    // Clean up partially allocated data on failure
+    for (i = 0; i < header->asset_count; i++) {
+        free(ctx->asset_names[i]);
+        ctx->asset_names[i] = NULL;
+    }
+
+    free(ctx->asset_names);
+    free(ctx->assets);
+    ctx->asset_names = NULL;
+    ctx->assets = NULL;
+    ctx->parsed_asset_count = 0;
+
+    return BUN_ERR_IO;
 }
 
 

@@ -93,8 +93,9 @@ typedef struct {
     BunHeader header;
     int header_parsed;
 
-    BunAssetRecord *assets;
-    u32 parsed_asset_count;
+    BunAssetRecord *assets;      // dynamically allocated array of parsed asset records
+    u32      parsed_asset_count; // number of asset records stored in assets
+    char   **asset_names;        // dynamically allocated array of parsed asset names
 
     BunViolation *violations;
     size_t violation_count;
