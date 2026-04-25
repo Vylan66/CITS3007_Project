@@ -11,11 +11,16 @@
  * Example helper: convert 4 bytes in `buf`, positioned at `offset`,
  * into a little-endian u32.
  */
+static u16 read_u16_le(const u8 *buf, size_t offset) {
+    return (u16)((u16)buf[offset]
+         | ((u16)buf[offset + 1] << 8));
+}
+
 static u32 read_u32_le(const u8 *buf, size_t offset) {
   return (u32)buf[offset]
-     | (u32)buf[offset + 1] << 8
-     | (u32)buf[offset + 2] << 16
-     | (u32)buf[offset + 3] << 24;
+       | (u32)buf[offset + 1] << 8
+       | (u32)buf[offset + 2] << 16
+       | (u32)buf[offset + 3] << 24;
 }
 
 static u64 read_u64_le(const u8 *buf, size_t offset) {
@@ -51,7 +56,7 @@ static bun_result_t bun_read_asset_name(
         return BUN_ERR_IO;
     }
 
-    name = malloc(name_len + 1);
+    name = (char *) malloc(name_len + 1);
     if (name == NULL) {
         return BUN_ERR_IO;
     }
@@ -107,7 +112,7 @@ static void bun_add_violation(BunParseContext *ctx, const char *fmt, ...) {
         size_t new_cap = (ctx->violation_capacity == 0) ? 8 : ctx->violation_capacity * 2;
 
         BunViolation *new_block =
-            realloc(ctx->violations, new_cap * sizeof(BunViolation));
+            (BunViolation *) realloc(ctx->violations, new_cap * sizeof(BunViolation));
 
         if (!new_block)
             return; // fail silently 
@@ -149,51 +154,37 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
     return BUN_ERR_IO;
   }
 
-  // Helper for u16
-  #define READ_U16_LE(b, off) ((u16)(b[off] | (b[off+1] << 8)))
-
-  // Helper for u64
-  #define READ_U64_LE(b, off) \
-    ((u64)b[off] \
-    | (u64)b[off+1] << 8 \
-    | (u64)b[off+2] << 16 \
-    | (u64)b[off+3] << 24 \
-    | (u64)b[off+4] << 32 \
-    | (u64)b[off+5] << 40 \
-    | (u64)b[off+6] << 48 \
-    | (u64)b[off+7] << 56)
-
   // 3. Populate header (read fields in order)
   size_t off = 0;
 
   header->magic = read_u32_le(buf, off);
   off += 4;
 
-  header->version_major = READ_U16_LE(buf, off);
+  header->version_major = read_u16_le(buf, off);
   off += 2;
 
-  header->version_minor = READ_U16_LE(buf, off);
+  header->version_minor = read_u16_le(buf, off);
   off += 2;
 
   header->asset_count = read_u32_le(buf, off);
   off += 4;
 
-  header->asset_table_offset = READ_U64_LE(buf, off);
+  header->asset_table_offset = read_u64_le(buf, off);
   off += 8;
 
-  header->string_table_offset = READ_U64_LE(buf, off);
+  header->string_table_offset = read_u64_le(buf, off);
   off += 8;
 
-  header->string_table_size = READ_U64_LE(buf, off);
+  header->string_table_size = read_u64_le(buf, off);
   off += 8;
 
-  header->data_section_offset = READ_U64_LE(buf, off);
+  header->data_section_offset = read_u64_le(buf, off);
   off += 8;
 
-  header->data_section_size = READ_U64_LE(buf, off);
+  header->data_section_size = read_u64_le(buf, off);
   off += 8;
 
-  header->reserved = READ_U64_LE(buf, off);
+  header->reserved = read_u64_le(buf, off);
   off += 8;
 
   // 4. VALIDATION
@@ -299,6 +290,8 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         ctx->assets = NULL;
         return BUN_ERR_IO;
     }
+
+    // TODO: TOCTOU possibility to swap out the file here. Use fd via fileno(). See lect 7 "file-descriptor–based functions".
 
     // Seek to the start of the asset table
     if (fseek(ctx->file, (long)header->asset_table_offset, SEEK_SET) != 0) {
