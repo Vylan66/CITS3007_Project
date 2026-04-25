@@ -35,6 +35,7 @@ bun_result_t bun_read_data(BunHeader *header, BunParseContext *ctx, BunAssetReco
 
   if (header->data_section_offset >= (u64)ctx->file_size) {return BUN_MALFORMED;}
   if (entry->data_offset > (u64)ctx->file_size - header->data_section_offset) {return BUN_MALFORMED;} 
+  if (entry->checksum == 0) { return BUN_UNSUPPORTED; }
 
   u64 actual_offset = header->data_section_offset + entry->data_offset;
 
@@ -60,14 +61,18 @@ bun_result_t bun_read_data(BunHeader *header, BunParseContext *ctx, BunAssetReco
   case 1: { /* RLE decompression */
     if (entry->data_size % 2 != 0) { return BUN_MALFORMED; }
     u64 remaining = entry->data_size;  
+    u64 decompressed_total = 0;
     BunRlePair pair;
 
     while (remaining > 0) {
       if (fread(&pair, sizeof(BunRlePair), 1, ctx->file) != 1) { return BUN_MALFORMED; }
       if (pair.count == 0) { return BUN_MALFORMED; }
+      if (decompressed_total >= entry->uncompressed_size) { return BUN_MALFORMED; }
       if (fwrite(&pair.value, sizeof(u8), pair.count, out_fptr) != pair.count) { return BUN_MALFORMED; }
       remaining -= (u64) sizeof(BunRlePair);
     }
+
+    if (decompressed_total != entry->uncompressed_size) { return BUN_MALFORMED; }
     break;
   }
   case 2: { /* zlib decompression */
