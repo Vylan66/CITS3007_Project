@@ -102,10 +102,17 @@ typedef struct {
     u8 **payload_previews;
     u32 *payload_preview_lengths;
 
+    FILE  **asset_files;
+
     BunViolation *violations;
     size_t violation_count;
     size_t violation_capacity;
 } BunParseContext;
+
+typedef struct {
+    u8 count;
+    u8 value;
+} BunRlePair;
 
 //
 // Public API

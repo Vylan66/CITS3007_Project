@@ -12,7 +12,9 @@ BUN format reference: bun-spec.pdf
 
 import struct
 import sys
+import argparse
 from pathlib import Path
+from typing import Optional
 
 # Header fields for output
 HEADER_FIELDS = [
@@ -111,18 +113,17 @@ def write_header(
     print("writing header to disk:")
     print("\n" + display_struct(header_args, HEADER_FIELDS) + "\n")
 
-    data = struct.pack(
-        _HEADER_FMT,
-        magic,
-        version_major,
-        version_minor,
-        asset_count,
-        asset_table_offset,
-        string_table_offset,
-        string_table_size,
-        data_section_offset,
-        data_section_size,
-        reserved,
+    data = pack_header(
+        asset_count         = asset_count,
+        asset_table_offset  = asset_table_offset,
+        string_table_offset = string_table_offset,
+        string_table_size   = string_table_size,
+        data_section_offset = data_section_offset,
+        data_section_size   = data_section_size,
+        magic               = magic,
+        version_major       = version_major,
+        version_minor       = version_minor,
+        reserved            = reserved,
     )
     print("len of header data:", len(data))
     f.write(data)
@@ -194,15 +195,113 @@ RECORD_SIZE = struct.calcsize(_RECORD_FMT)
 assert HEADER_SIZE == 60, f"Unexpected record size: {HEADER_SIZE}"
 assert RECORD_SIZE == 48, f"Unexpected record size: {RECORD_SIZE}"
 
-def main():
+def pack_header(
+    *,
+    asset_count: int,
+    asset_table_offset: int,
+    string_table_offset: int,
+    string_table_size: int,
+    data_section_offset: int,
+    data_section_size: int,
+    magic: int = BUN_MAGIC,
+    version_major: int = BUN_VERSION_MAJOR,
+    version_minor: int = BUN_VERSION_MINOR,
+    reserved: int = 0,
+) -> bytes:
+    """Return a packed BUN header."""
+    return struct.pack(
+        _HEADER_FMT,
+        magic,
+        version_major,
+        version_minor,
+        asset_count,
+        asset_table_offset,
+        string_table_offset,
+        string_table_size,
+        data_section_offset,
+        data_section_size,
+        reserved,
+    )
+
+def write_header_fixture(
+    path: Path,
+    *,
+    truncate_to: Optional[int] = None,
+    total_size: int = HEADER_SIZE,
+    **header_fields,
+) -> None:
+    """Write a header-only fixture, optionally truncated or padded."""
+    data = pack_header(**header_fields)
+    if truncate_to is not None:
+        data = data[:truncate_to]
+    elif total_size > len(data):
+        data += b"\x00" * (total_size - len(data))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+def generate_header_fixtures(root: Path) -> None:
+    """Generate the header parser fixtures used by tests/test_bun.c."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "valid").mkdir(exist_ok=True)
+    (root / "invalid").mkdir(exist_ok=True)
+
+    valid_empty = dict(
+        asset_count         = 0,
+        asset_table_offset  = HEADER_SIZE,
+        string_table_offset = HEADER_SIZE,
+        string_table_size   = 0,
+        data_section_offset = HEADER_SIZE,
+        data_section_size   = 0,
+    )
+
+    write_header_fixture(root / "valid" / "01-empty.bun", **valid_empty)
+
+    write_header_fixture(
+        root / "invalid" / "01-bad-magic.bun",
+        **{**valid_empty, "magic": 0x12345678},
+    )
+
+    write_header_fixture(
+        root / "invalid" / "02-bad-version.bun",
+        **{**valid_empty, "version_major": 9, "version_minor": 9},
+    )
+
+    write_header_fixture(
+        root / "invalid" / "03-truncated-header.bun",
+        truncate_to=HEADER_SIZE - 1,
+        **valid_empty,
+    )
+
+    write_header_fixture(
+        root / "invalid" / "04-unaligned-offset.bun",
+        total_size=64,
+        **{**valid_empty, "asset_table_offset": HEADER_SIZE + 2},
+    )
+
+    write_header_fixture(
+        root / "invalid" / "05-asset-table-oob.bun",
+        **{**valid_empty, "asset_count": 1},
+    )
+
+    write_header_fixture(
+        root / "invalid" / "06-overlap-sections.bun",
+        total_size=112,
+        asset_count         = 1,
+        asset_table_offset  = HEADER_SIZE,
+        string_table_offset = 80,
+        string_table_size   = 32,
+        data_section_offset = 112,
+        data_section_size   = 0,
+    )
+
+def write_minimal(out_path: Path) -> None:
     """
     Write a minimal valid BUN file with a single uncompressed asset.
 
     Layout (canonical order):
       [header] [asset entry table] [string table] [data section]
     """
-    out_path = Path("minimal.bun")
-
     asset_name    = b"hello"
     asset_payload = b"Hello, BUN world!\n"
     asset_count   = 1
@@ -265,6 +364,30 @@ def main():
         write_padded(payload_padding_len, "payload padding")
 
     print(f"Wrote {out_path} ({out_path.stat().st_size} bytes)")
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Generate BUN files.")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path("minimal.bun"),
+        help="output path for the default minimal BUN file",
+    )
+    parser.add_argument(
+        "--header-fixtures",
+        type=Path,
+        metavar="DIR",
+        help="generate header test fixtures under DIR/{valid,invalid}",
+    )
+    args = parser.parse_args(argv)
+
+    if args.header_fixtures is not None:
+        generate_header_fixtures(args.header_fixtures)
+    else:
+        write_minimal(args.output)
+
+    return 0
 
 
 if __name__ == "__main__":

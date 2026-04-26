@@ -117,6 +117,14 @@ int main(int argc, char *argv[]) {
     return result;
   }
 
+  printf("Magic: 0x%x\n", header.magic);
+  printf("Version: %u.%u\n", header.version_major, header.version_minor);
+  printf("Asset count: %u\n", header.asset_count);
+  printf("Asset table offset: %" PRIu64 "\n", header.asset_table_offset);
+  printf("String table offset: %" PRIu64 "\n", header.string_table_offset);
+  printf("Data section offset: %" PRIu64 "\n", header.data_section_offset);
+
+
   result = bun_parse_assets(&ctx, &header);
   if (result != BUN_OK) {
     print_parse_error(&ctx, "Error: asset parsing failed");
