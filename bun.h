@@ -299,6 +299,8 @@ fail_io:
     return BUN_ERR_IO;
 }
 
+void bun_free_context(BunParseContext *ctx);
+
 bun_result_t bun_close(BunParseContext *ctx);
 
 #endif // BUN_H

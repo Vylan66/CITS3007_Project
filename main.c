@@ -121,7 +121,7 @@ int main(int argc, char *argv[]) {
 
   print_header(&header);
   print_assets(&ctx);
-
+  bun_free_context(&ctx);
   bun_close(&ctx);
   return BUN_OK;
 }

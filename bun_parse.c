@@ -366,7 +366,32 @@ fail_io:
     return BUN_ERR_IO;
 }
 
+void bun_free_context(BunParseContext *ctx) {
+    if (ctx == NULL) return;
 
+    if (ctx->asset_names != NULL) {
+        for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
+            free(ctx->asset_names[i]);
+        }
+        free(ctx->asset_names);
+    }
+
+    if (ctx->payload_previews != NULL) {
+        for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
+            free(ctx->payload_previews[i]);
+        }
+        free(ctx->payload_previews);
+    }
+
+    free(ctx->payload_preview_lengths);
+    free(ctx->assets);
+
+    ctx->asset_names = NULL;
+    ctx->payload_previews = NULL;
+    ctx->payload_preview_lengths = NULL;
+    ctx->assets = NULL;
+    ctx->parsed_asset_count = 0;
+}
 
 
 
