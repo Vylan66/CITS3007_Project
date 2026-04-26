@@ -83,8 +83,12 @@ static void print_payload_preview(const u8 *buf, u32 len) {
     } else {
         for (u32 i = 0; i < len; i++) {
             printf("%02x ", buf[i]);
+
+            if (i + 1 < len) {
+                printf(" ");
+            }  
         }
-    }
+    }    
 }
 
 int main(int argc, char *argv[]) {
@@ -108,6 +112,7 @@ int main(int argc, char *argv[]) {
 
   if (result != BUN_OK) {
     print_parse_error(&ctx, "Error: header invalid or unsupported");
+    bun_free_context(&ctx);
     bun_close(&ctx);
     return result;
   }
@@ -115,6 +120,7 @@ int main(int argc, char *argv[]) {
   result = bun_parse_assets(&ctx, &header);
   if (result != BUN_OK) {
     print_parse_error(&ctx, "Error: asset parsing failed");
+    bun_free_context(&ctx);
     bun_close(&ctx);
     return result;
   }

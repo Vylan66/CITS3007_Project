@@ -270,6 +270,8 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
 
     ctx->assets = NULL;
     ctx->asset_names = NULL;
+    ctx->payload_previews = NULL;
+    ctx->payload_preview_lengths = NULL;
     ctx->parsed_asset_count = 0;
 
     // No assets → nothing to do
@@ -289,6 +291,16 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         free(ctx->assets);
         ctx->assets = NULL;
         return BUN_ERR_IO;
+    }
+
+    ctx->payload_previews = calloc(header->asset_count, sizeof(u8 *));
+    if (ctx->payload_previews == NULL) {
+        goto fail_io;
+    }
+
+    ctx->payload_preview_lengths = calloc(header->asset_count, sizeof(u32));
+    if (ctx->payload_preview_lengths == NULL) {
+        goto fail_io;
     }
 
     // Ensure offset is safe to cast to long for fseek
@@ -346,19 +358,68 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         if (name_result != BUN_OK) {
             goto fail_io;
         }
+        u32 preview_len = asset->data_size < BUN_PAYLOAD_PREVIEW_LEN
+                ? (u32)asset->data_size
+                : BUN_PAYLOAD_PREVIEW_LEN;
+
+      ctx->payload_preview_lengths[i] = preview_len;
+
+      if (preview_len > 0) {
+          u64 payload_offset = header->data_section_offset + asset->data_offset;
+
+          ctx->payload_previews[i] = malloc(preview_len);
+          if (ctx->payload_previews[i] == NULL) {
+              goto fail_io;
+          }
+
+          if (payload_offset > (u64)LONG_MAX) {
+              goto fail_io;
+          }
+
+          if (fseek(ctx->file, (long)payload_offset, SEEK_SET) != 0) {
+              goto fail_io;
+          }
+
+          if (fread(ctx->payload_previews[i], 1, preview_len, ctx->file) != preview_len) {
+              goto fail_io;
+          }
+
+          /*
+          * Reading the payload moves the file position away from the asset table,
+          * so seek back to where the next asset record should be.
+          */
+          if (fseek(ctx->file,
+                    (long)(header->asset_table_offset + ((u64)(i + 1) * BUN_ASSET_RECORD_SIZE)),
+                    SEEK_SET) != 0) {
+              goto fail_io;
+          }
+      }
     }
 
     return BUN_OK;
 
 fail_io:
-    // Clean up partially allocated data on failure
-    for (i = 0; i < header->asset_count; i++) {
-        free(ctx->asset_names[i]);
-        ctx->asset_names[i] = NULL;
+    if (ctx->asset_names != NULL) {
+        for (i = 0; i < ctx->parsed_asset_count; i++) {
+            free(ctx->asset_names[i]);
+            ctx->asset_names[i] = NULL;
+        }
     }
 
+    if (ctx->payload_previews != NULL) {
+        for (i = 0; i < ctx->parsed_asset_count; i++) {
+            free(ctx->payload_previews[i]);
+            ctx->payload_previews[i] = NULL;
+        }
+    }
+
+    free(ctx->payload_preview_lengths);
+    free(ctx->payload_previews);
     free(ctx->asset_names);
     free(ctx->assets);
+
+    ctx->payload_preview_lengths = NULL;
+    ctx->payload_previews = NULL;
     ctx->asset_names = NULL;
     ctx->assets = NULL;
     ctx->parsed_asset_count = 0;
@@ -366,8 +427,22 @@ fail_io:
     return BUN_ERR_IO;
 }
 
+bun_result_t bun_close(BunParseContext *ctx) {
+  assert(ctx->file);
+
+  int res = fclose(ctx->file);
+  if (res) {
+    return BUN_ERR_IO;
+  } else {
+    ctx->file = NULL;
+    return BUN_OK;
+  }
+}
+
 void bun_free_context(BunParseContext *ctx) {
-    if (ctx == NULL) return;
+    if (ctx == NULL) {
+        return;
+    }
 
     if (ctx->asset_names != NULL) {
         for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
@@ -385,24 +460,15 @@ void bun_free_context(BunParseContext *ctx) {
 
     free(ctx->payload_preview_lengths);
     free(ctx->assets);
+    free(ctx->violations);
 
     ctx->asset_names = NULL;
     ctx->payload_previews = NULL;
     ctx->payload_preview_lengths = NULL;
     ctx->assets = NULL;
+    ctx->violations = NULL;
+
     ctx->parsed_asset_count = 0;
-}
-
-
-
-bun_result_t bun_close(BunParseContext *ctx) {
-  assert(ctx->file);
-
-  int res = fclose(ctx->file);
-  if (res) {
-    return BUN_ERR_IO;
-  } else {
-    ctx->file = NULL;
-    return BUN_OK;
-  }
+    ctx->violation_count = 0;
+    ctx->violation_capacity = 0;
 }
