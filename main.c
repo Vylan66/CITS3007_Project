@@ -38,6 +38,10 @@ static void print_assets(const BunParseContext *ctx) {
         printf("    type: %" PRIu32 "\n", asset->type);
         printf("    checksum: %" PRIu32 "\n", asset->checksum);
         printf("    flags: %" PRIu32 "\n", asset->flags);
+        printf("    preview: ");
+        print_payload_preview(ctx->payload_previews[i],
+                              ctx->payload_preview_lengths[i]);
+        printf("\n");
     }
 }
 
@@ -52,6 +56,34 @@ static void print_parse_error(const BunParseContext *ctx, const char *fallback) 
         print_violations(ctx);
     } else {
         fprintf(stderr, "%s\n", fallback);
+    }
+}
+
+static int is_printable_buffer(const u8 *buf, u32 len) {
+    for (u32 i = 0; i < len; i++) {
+        if (buf[i] < 32 || buf[i] > 126) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void print_payload_preview(const u8 *buf, u32 len) {
+    if (buf == NULL || len == 0) {
+        printf("(empty)");
+        return;
+    }
+
+    if (is_printable_buffer(buf, len)) {
+        printf("\"");
+        for (u32 i = 0; i < len; i++) {
+            putchar(buf[i]);
+        }
+        printf("\"");
+    } else {
+        for (u32 i = 0; i < len; i++) {
+            printf("%02x ", buf[i]);
+        }
     }
 }
 
