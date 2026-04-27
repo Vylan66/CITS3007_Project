@@ -46,49 +46,6 @@ static u64 read_u64_le(const u8 *buf, size_t offset) {
          | ((u64)buf[offset + 7] << 56);
 }
 
-// Read one asset name from the string table.
-// Assumes the asset's name_offset and name_length have already been validated.
-static bun_result_t bun_read_asset_name(
-    BunParseContext *ctx,
-    const BunHeader *header,
-    const BunAssetRecord *asset,
-    char **out_name
-) {
-    u64 file_offset = header->string_table_offset + asset->name_offset;
-    size_t name_len = (size_t) asset->name_length;
-    char *name = NULL;
-
-    if (out_name == NULL) {
-        return BUN_ERR_IO;
-    }
-
-    *out_name = NULL;
-
-    if (file_offset > (u64) LONG_MAX) {
-        return BUN_ERR_IO;
-    }
-
-    name = (char *) malloc(name_len + 1);
-    if (name == NULL) {
-        return BUN_ERR_IO;
-    }
-
-    if (fseek(ctx->file, (long) file_offset, SEEK_SET) != 0) {
-        free(name);
-        return BUN_ERR_IO;
-    }
-
-    if (fread(name, 1, name_len, ctx->file) != name_len) {
-        free(name);
-        return BUN_ERR_IO;
-    }
-
-    name[name_len] = '\0';
-    *out_name = name;
-
-    return BUN_OK;
-}
-
 bun_result_t bun_read_data(const BunHeader *header, BunParseContext *ctx, BunAssetRecord *entry, FILE *out_fptr) {
   // FUNCTION: take in a single asset record and output the decompressed version into *out_fptr.
   // ENSURE THE FILE POINTER IS SECURE. ANYONE WITH THE SAME PERMS MAY READ IT OTHERWISE.
@@ -104,7 +61,7 @@ bun_result_t bun_read_data(const BunHeader *header, BunParseContext *ctx, BunAss
 
   if (header->data_section_offset >= (u64)ctx->file_size) {return BUN_MALFORMED;}
   if (entry->data_offset > (u64)ctx->file_size - header->data_section_offset) {return BUN_MALFORMED;} 
-  if (entry->checksum == 0) { return BUN_UNSUPPORTED; }
+  if (entry->checksum != 0) { return BUN_UNSUPPORTED; }
 
   u64 actual_offset = header->data_section_offset + entry->data_offset;
 
@@ -318,9 +275,9 @@ static void bun_add_violation(BunParseContext *ctx, const char *fmt, ...) {
         fmt,
         args
     );
-
+    
     va_end(args);
-
+    
     ctx->violation_count++;
 }
 
@@ -329,51 +286,47 @@ static void bun_add_violation(BunParseContext *ctx, const char *fmt, ...) {
 //TODO: ADD SAFETEY CHECKS
 //TODO: check tasks spreadsheet: Task ID: H6
 bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
-  u8 buf[BUN_HEADER_SIZE];
   bun_result_t result = BUN_OK;
+  u8 tmp[8];
 
   // 1. Check file is large enough
   if (ctx->file_size < (long)BUN_HEADER_SIZE) {
     return BUN_MALFORMED;
   }
-
-  // 2. Read header into buffer
-  if (fread(buf, 1, BUN_HEADER_SIZE, ctx->file) != BUN_HEADER_SIZE) {
-    return BUN_ERR_IO;
-  }
-
+  
+  // 2. Seek to start of file/header (if not already at start)
+  if (fseek(ctx->file, 0, SEEK_SET) != 0) { return BUN_ERR_IO; }
+  
   // 3. Populate header (read fields in order)
-  size_t off = 0;
-
-  header->magic = read_u32_le(buf, off);
-  off += 4;
-
-  header->version_major = read_u16_le(buf, off);
-  off += 2;
-
-  header->version_minor = read_u16_le(buf, off);
-  off += 2;
-
-  header->asset_count = read_u32_le(buf, off);
-  off += 4;
-
-  header->asset_table_offset = read_u64_le(buf, off);
-  off += 8;
-
-  header->string_table_offset = read_u64_le(buf, off);
-  off += 8;
-
-  header->string_table_size = read_u64_le(buf, off);
-  off += 8;
-
-  header->data_section_offset = read_u64_le(buf, off);
-  off += 8;
-
-  header->data_section_size = read_u64_le(buf, off);
-  off += 8;
-
-  header->reserved = read_u64_le(buf, off);
-  off += 8;
+  if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { return BUN_ERR_IO; }
+  header->magic = read_u32_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u16), ctx->file) != sizeof(u16)) { return BUN_ERR_IO; }
+  header->version_major = read_u16_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u16), ctx->file) != sizeof(u16)) { return BUN_ERR_IO; }
+  header->version_minor = read_u16_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { return BUN_ERR_IO; }
+  header->asset_count = read_u32_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { return BUN_ERR_IO; }
+  header->asset_table_offset = read_u64_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { return BUN_ERR_IO; }
+  header->string_table_offset = read_u64_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { return BUN_ERR_IO; }
+  header->string_table_size = read_u64_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { return BUN_ERR_IO; }
+  header->data_section_offset = read_u64_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { return BUN_ERR_IO; }
+  header->data_section_size = read_u64_le(tmp, 0);
+  
+  if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { return BUN_ERR_IO; }
+  header->reserved = read_u64_le(tmp, 0);
 
   // 4. VALIDATION
 
@@ -491,25 +444,35 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
     // Iterate over each asset record
     for (i = 0; i < header->asset_count; i++) {
         BunAssetRecord *asset = &ctx->assets[i];
-        u8 buf[BUN_ASSET_RECORD_SIZE];
         bun_result_t name_result;
+        u8 tmp[8];
 
-        // Read raw asset record bytes from file
-        if (fread(buf, 1, BUN_ASSET_RECORD_SIZE, ctx->file) != BUN_ASSET_RECORD_SIZE) {
-            /* TODO A1: read asset records safely (handle malformed/truncated files) */
-            goto fail_io;
-        }
+        if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { goto fail_io; }
+        asset->name_offset = read_u32_le(tmp, 0);
 
-        // Decode little-endian fields into struct
-        asset->name_offset       = read_u32_le(buf, 0);
-        asset->name_length       = read_u32_le(buf, 4);
-        asset->data_offset       = read_u64_le(buf, 8);
-        asset->data_size         = read_u64_le(buf, 16);
-        asset->uncompressed_size = read_u64_le(buf, 24);
-        asset->compression       = read_u32_le(buf, 32);
-        asset->type              = read_u32_le(buf, 36);
-        asset->checksum          = read_u32_le(buf, 40);
-        asset->flags             = read_u32_le(buf, 44);
+        if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { goto fail_io; }
+        asset->name_length = read_u32_le(tmp, 0);
+
+        if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { goto fail_io; }
+        asset->data_offset = read_u64_le(tmp, 0);
+
+        if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { goto fail_io; }
+        asset->data_size = read_u64_le(tmp, 0);
+
+        if (fread(tmp, 1, sizeof(u64), ctx->file) != sizeof(u64)) { goto fail_io; }
+        asset->uncompressed_size = read_u64_le(tmp, 0);
+
+        if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { goto fail_io; }
+        asset->compression = read_u32_le(tmp, 0);
+
+        if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { goto fail_io; }
+        asset->type = read_u32_le(tmp, 0);
+
+        if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { goto fail_io; }
+        asset->checksum = read_u32_le(tmp, 0);
+
+        if (fread(tmp, 1, sizeof(u32), ctx->file) != sizeof(u32)) { goto fail_io; }
+        asset->flags = read_u32_le(tmp, 0);
 
         ctx->parsed_asset_count++;
 
@@ -625,8 +588,8 @@ void bun_free_context(BunParseContext *ctx) {
             if (ctx->asset_files[i] != NULL) {
                 fclose(ctx->asset_files[i]);
             }
-            free(ctx->asset_names);
         }
+        free(ctx->asset_names);
     }
 
     if (ctx->payload_previews != NULL) {
