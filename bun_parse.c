@@ -579,9 +579,10 @@ void bun_free_context(BunParseContext *ctx) {
     if (ctx->asset_names != NULL) {
         for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
             if (ctx->asset_files[i] != NULL) {
-            fclose(ctx->asset_files[i]);
+                fclose(ctx->asset_files[i]);
+            }
+            free(ctx->asset_names);
         }
-        free(ctx->asset_names);
     }
 
     if (ctx->payload_previews != NULL) {
