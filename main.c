@@ -4,47 +4,6 @@
 
 #include "bun.h"
 
-static void print_header(const BunHeader *header) {
-    printf("Header:\n");
-    printf("  magic: 0x%08" PRIx32 "\n", header->magic);
-    printf("  version_major: %" PRIu16 "\n", header->version_major);
-    printf("  version_minor: %" PRIu16 "\n", header->version_minor);
-    printf("  asset_count: %" PRIu32 "\n", header->asset_count);
-    printf("  asset_table_offset: %" PRIu64 "\n", header->asset_table_offset);
-    printf("  string_table_offset: %" PRIu64 "\n", header->string_table_offset);
-    printf("  string_table_size: %" PRIu64 "\n", header->string_table_size);
-    printf("  data_section_offset: %" PRIu64 "\n", header->data_section_offset);
-    printf("  data_section_size: %" PRIu64 "\n", header->data_section_size);
-    printf("  reserved: %" PRIu64 "\n", header->reserved);
-}
-
-static void print_assets(const BunParseContext *ctx) {
-    printf("\nAssets:\n");
-
-    for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
-        const BunAssetRecord *asset = &ctx->assets[i];
-
-        printf("  Asset %" PRIu32 ":\n", i);
-        printf("    name: %s\n",
-               ctx->asset_names != NULL && ctx->asset_names[i] != NULL
-                   ? ctx->asset_names[i]
-                   : "(not loaded)");
-        printf("    name_offset: %" PRIu32 "\n", asset->name_offset);
-        printf("    name_length: %" PRIu32 "\n", asset->name_length);
-        printf("    data_offset: %" PRIu64 "\n", asset->data_offset);
-        printf("    data_size: %" PRIu64 "\n", asset->data_size);
-        printf("    uncompressed_size: %" PRIu64 "\n", asset->uncompressed_size);
-        printf("    compression: %" PRIu32 "\n", asset->compression);
-        printf("    type: %" PRIu32 "\n", asset->type);
-        printf("    checksum: %" PRIu32 "\n", asset->checksum);
-        printf("    flags: %" PRIu32 "\n", asset->flags);
-        printf("    preview: ");
-        print_payload_preview(ctx->payload_previews[i],
-                              ctx->payload_preview_lengths[i]);
-        printf("\n");
-    }
-}
-
 static void print_violations(const BunParseContext *ctx) {
     for (size_t i = 0; i < ctx->violation_count; i++) {
         fprintf(stderr, "%s\n", ctx->violations[i].message);
@@ -89,6 +48,47 @@ static void print_payload_preview(const u8 *buf, u32 len) {
             }  
         }
     }    
+}
+
+static void print_header(const BunHeader *header) {
+    printf("Header:\n");
+    printf("  magic: 0x%08" PRIx32 "\n", header->magic);
+    printf("  version_major: %" PRIu16 "\n", header->version_major);
+    printf("  version_minor: %" PRIu16 "\n", header->version_minor);
+    printf("  asset_count: %" PRIu32 "\n", header->asset_count);
+    printf("  asset_table_offset: %" PRIu64 "\n", header->asset_table_offset);
+    printf("  string_table_offset: %" PRIu64 "\n", header->string_table_offset);
+    printf("  string_table_size: %" PRIu64 "\n", header->string_table_size);
+    printf("  data_section_offset: %" PRIu64 "\n", header->data_section_offset);
+    printf("  data_section_size: %" PRIu64 "\n", header->data_section_size);
+    printf("  reserved: %" PRIu64 "\n", header->reserved);
+}
+
+static void print_assets(const BunParseContext *ctx) {
+    printf("\nAssets:\n");
+    
+    for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
+        const BunAssetRecord *asset = &ctx->assets[i];
+        
+        printf("  Asset %" PRIu32 ":\n", i);
+        printf("    name: %s\n",
+            ctx->asset_names != NULL && ctx->asset_names[i] != NULL
+            ? ctx->asset_names[i]
+            : "(not loaded)");
+            printf("    name_offset: %" PRIu32 "\n", asset->name_offset);
+            printf("    name_length: %" PRIu32 "\n", asset->name_length);
+            printf("    data_offset: %" PRIu64 "\n", asset->data_offset);
+            printf("    data_size: %" PRIu64 "\n", asset->data_size);
+            printf("    uncompressed_size: %" PRIu64 "\n", asset->uncompressed_size);
+            printf("    compression: %" PRIu32 "\n", asset->compression);
+            printf("    type: %" PRIu32 "\n", asset->type);
+            printf("    checksum: %" PRIu32 "\n", asset->checksum);
+            printf("    flags: %" PRIu32 "\n", asset->flags);
+            printf("    preview: ");
+            print_payload_preview(ctx->payload_previews[i],
+                              ctx->payload_preview_lengths[i]);
+        printf("\n");
+    }
 }
 
 int main(int argc, char *argv[]) {
