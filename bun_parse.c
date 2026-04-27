@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <stdarg.h>
 
+
 #include "bun.h"
 
 /**
@@ -219,6 +220,49 @@ static int create_secure_tmpfile_in_dir(const char *dir_path, FILE **out_fp) {
 
     *out_fp = fp;
     return 0;
+}
+
+// Read one asset name from the string table.
+// Assumes the asset's name_offset and name_length have already been validated.
+static bun_result_t bun_read_asset_name(
+    BunParseContext *ctx,
+    const BunHeader *header,
+    const BunAssetRecord *asset,
+    char **out_name
+) {
+    u64 file_offset = header->string_table_offset + asset->name_offset;
+    size_t name_len = (size_t) asset->name_length;
+    char *name = NULL;
+
+    if (out_name == NULL) {
+        return BUN_ERR_IO;
+    }
+
+    *out_name = NULL;
+
+    if (file_offset > (u64) LONG_MAX) {
+        return BUN_ERR_IO;
+    }
+
+    name = malloc(name_len + 1);
+    if (name == NULL) {
+        return BUN_ERR_IO;
+    }
+
+    if (fseek(ctx->file, (long) file_offset, SEEK_SET) != 0) {
+        free(name);
+        return BUN_ERR_IO;
+    }
+
+    if (fread(name, 1, name_len, ctx->file) != name_len) {
+        free(name);
+        return BUN_ERR_IO;
+    }
+
+    name[name_len] = '\0';
+    *out_name = name;
+
+    return BUN_OK;
 }
 
 //
