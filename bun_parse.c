@@ -450,6 +450,8 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
 
     ctx->assets = NULL;
     ctx->asset_names = NULL;
+    ctx->payload_previews = NULL;
+    ctx->payload_preview_lengths = NULL;
     ctx->parsed_asset_count = 0;
 
     // No assets → nothing to do
@@ -469,6 +471,16 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
 
     if (!ctx->assets || !ctx->asset_names || !ctx->asset_files) { goto fail_io; }
 
+    ctx->payload_previews = calloc(header->asset_count, sizeof(u8 *));
+    if (ctx->payload_previews == NULL) {
+        goto fail_io;
+    }
+
+    ctx->payload_preview_lengths = calloc(header->asset_count, sizeof(u32));
+    if (ctx->payload_preview_lengths == NULL) {
+        goto fail_io;
+    }
+
     // Ensure offset is safe to cast to long for fseek
     if (header->asset_table_offset > (u64)LONG_MAX) { goto fail_io; }
     // TODO: TOCTOU possibility to swap out the file here. Use fd via fileno(). See lect 7 "file-descriptor–based functions".
@@ -480,6 +492,7 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
     for (i = 0; i < header->asset_count; i++) {
         BunAssetRecord *asset = &ctx->assets[i];
         u8 buf[BUN_ASSET_RECORD_SIZE];
+        bun_result_t name_result;
 
         // Read raw asset record bytes from file
         if (fread(buf, 1, BUN_ASSET_RECORD_SIZE, ctx->file) != BUN_ASSET_RECORD_SIZE) {
@@ -508,47 +521,87 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         /* TODO A6: validate flags */
 
         // Load asset name from string table using helper (D1b)
-        if (bun_read_asset_name(ctx, header, asset, &ctx->asset_names[i]) != BUN_OK) { goto fail_io; }
-        if (create_secure_tmpfile_in_dir(tmpdir_path, &ctx->asset_files[i]) != 0) { goto fail_io; }
-        if (bun_read_data(header, ctx, asset, ctx->asset_files[i]) != BUN_OK) { goto fail_io; }
 
-        // Seek back to beginning of file so it's ready for the user to read
+        name_result = bun_read_asset_name(ctx, header, asset, &ctx->asset_names[i]);
+        if (name_result != BUN_OK) {
+            goto fail_io;
+        }
+
+        if (create_secure_tmpfile_in_dir(tmpdir_path, &ctx->asset_files[i]) != 0) {
+            goto fail_io;
+        }
+
+        if (bun_read_data(header, ctx, asset, ctx->asset_files[i]) != BUN_OK) {
+            goto fail_io;
+        }
+
+        /*
+         * Read only a short prefix for preview output.
+         * The full payload handling is done by bun_read_data().
+         */
         rewind(ctx->asset_files[i]);
+
+        ctx->payload_previews[i] = malloc(BUN_PAYLOAD_PREVIEW_LEN);
+        if (ctx->payload_previews[i] == NULL) {
+            goto fail_io;
+        }
+
+        ctx->payload_preview_lengths[i] =
+            (u32)fread(ctx->payload_previews[i],
+                       1,
+                       BUN_PAYLOAD_PREVIEW_LEN,
+                       ctx->asset_files[i]);
+
+        rewind(ctx->asset_files[i]);
+
     }
 
     free(tmpdir_path); // the PATH can be freed, but not the file or directory.
     return BUN_OK;
 
 fail_io:
-    // TODO: should header->asset_count be header->parsed_asset_count?
-    // Close any opened temp files
-    if (ctx->asset_files) {
-        for (i = 0; i < header->asset_count; ++i) {
-            fclose(ctx->asset_files[i]);
-            ctx->asset_files[i] = NULL;
+// Close any opened temp files
+    if (ctx->asset_files != NULL) {
+        for (i = 0; i < ctx->parsed_asset_count; i++) {
+            if (ctx->asset_files[i] != NULL) {
+                fclose(ctx->asset_files[i]);
+                ctx->asset_files[i] = NULL;
+            }
         }
         free(ctx->asset_files);
         ctx->asset_files = NULL;
     }
 
-    // Clean up partially allocated data on failure
-    for (i = 0; i < header->asset_count; i++) {
-        free(ctx->asset_names[i]);
-        ctx->asset_names[i] = NULL;
+    // Free loaded asset names
+    if (ctx->asset_names != NULL) {
+        for (i = 0; i < ctx->parsed_asset_count; i++) {
+            free(ctx->asset_names[i]);
+            ctx->asset_names[i] = NULL;
+        }
     }
 
+    // Free payload preview buffers
+    if (ctx->payload_previews != NULL) {
+        for (i = 0; i < ctx->parsed_asset_count; i++) {
+            free(ctx->payload_previews[i]);
+            ctx->payload_previews[i] = NULL;
+        }
+    }
+
+    free(ctx->payload_preview_lengths);
+    free(ctx->payload_previews);
     free(ctx->asset_names);
     free(ctx->assets);
+
+    ctx->payload_preview_lengths = NULL;
+    ctx->payload_previews = NULL;
     ctx->asset_names = NULL;
     ctx->assets = NULL;
     ctx->parsed_asset_count = 0;
-
+    
+    free(tmpdir_path);
     return BUN_ERR_IO;
 }
-
-
-
-
 
 bun_result_t bun_close(BunParseContext *ctx) {
   assert(ctx->file);
@@ -560,4 +613,41 @@ bun_result_t bun_close(BunParseContext *ctx) {
     ctx->file = NULL;
     return BUN_OK;
   }
+}
+
+void bun_free_context(BunParseContext *ctx) {
+    if (ctx == NULL) {
+        return;
+    }
+
+    if (ctx->asset_names != NULL) {
+        for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
+            if (ctx->asset_files[i] != NULL) {
+                fclose(ctx->asset_files[i]);
+            }
+            free(ctx->asset_names);
+        }
+    }
+
+    if (ctx->payload_previews != NULL) {
+        for (u32 i = 0; i < ctx->parsed_asset_count; i++) {
+            free(ctx->payload_previews[i]);
+        }
+        free(ctx->payload_previews);
+    }
+
+    free(ctx->payload_preview_lengths);
+    free(ctx->assets);
+    free(ctx->violations);
+
+    ctx->asset_names = NULL;
+    ctx->payload_previews = NULL;
+    ctx->payload_preview_lengths = NULL;
+    ctx->assets = NULL;
+    ctx->violations = NULL;
+    ctx->asset_files = NULL;
+
+    ctx->parsed_asset_count = 0;
+    ctx->violation_count = 0;
+    ctx->violation_capacity = 0;
 }
