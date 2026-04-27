@@ -13,6 +13,7 @@ BUN format reference: bun-spec.pdf
 import struct
 import sys
 import argparse
+import zlib
 from pathlib import Path
 from typing import Optional
 
@@ -241,7 +242,13 @@ def write_header_fixture(
     path.write_bytes(data)
 
 def generate_header_fixtures(root: Path) -> None:
-    """Generate the header parser fixtures used by tests/test_bun.c."""
+    """
+    Write the small .bun files that tests/test_bun.c expects.
+
+    Same names/paths as the in-test fallback: valid minimal plus a few
+    deliberately broken headers (truncation, bad alignment, bounds, overlap).
+    Run from repo root: python3 bunfile_generator.py --header-fixtures tests/fixtures
+    """
     root.mkdir(parents=True, exist_ok=True)
     (root / "valid").mkdir(exist_ok=True)
     (root / "invalid").mkdir(exist_ok=True)
@@ -365,6 +372,305 @@ def write_minimal(out_path: Path) -> None:
 
     print(f"Wrote {out_path} ({out_path.stat().st_size} bytes)")
 
+
+def pack_record(
+    *,
+    name_offset: int,
+    name_length: int,
+    data_offset: int,
+    data_size: int,
+    uncompressed_size: int = 0,
+    compression: int = COMPRESS_NONE,
+    asset_type: int = 0,
+    checksum: int = 0,
+    flags: int = 0,
+) -> bytes:
+    return struct.pack(
+        _RECORD_FMT,
+        name_offset,
+        name_length,
+        data_offset,
+        data_size,
+        uncompressed_size,
+        compression,
+        asset_type,
+        checksum,
+        flags,
+    )
+
+
+def write_custom_fixture(
+    out_path: Path,
+    *,
+    names: bytes,
+    payloads: list[bytes],
+    records: list[dict],
+    data_section_size: Optional[int] = None,
+) -> None:
+    asset_count = len(records)
+    asset_table_offset = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + asset_count * RECORD_SIZE)
+    string_table_size = _align4(len(names))
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    if data_section_size is None:
+        data_section_size = _align4(sum(len(payload) for payload in payloads))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "wb") as f:
+        write_header(
+            f,
+            asset_count=asset_count,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size,
+        )
+
+        current = HEADER_SIZE
+        if asset_table_offset > current:
+            write_padding(f, asset_table_offset - current, "before asset table")
+            current = asset_table_offset
+
+        for record in records:
+            f.write(pack_record(**record))
+            current += RECORD_SIZE
+
+        if string_table_offset > current:
+            write_padding(f, string_table_offset - current, "before string table")
+            current = string_table_offset
+
+        f.write(names)
+        current += len(names)
+        if string_table_size > len(names):
+            write_padding(f, string_table_size - len(names), "string table padding")
+            current += string_table_size - len(names)
+
+        if data_section_offset > current:
+            write_padding(f, data_section_offset - current, "before data section")
+            current = data_section_offset
+
+        payload_total = 0
+        for payload in payloads:
+            f.write(payload)
+            payload_total += len(payload)
+
+        if data_section_size > payload_total:
+            write_padding(f, data_section_size - payload_total, "data padding")
+
+    print(f"Wrote {out_path} ({out_path.stat().st_size} bytes)")
+
+
+def rle_encode(data: bytes) -> bytes:
+    if not data:
+        return b""
+
+    output = bytearray()
+    run_value = data[0]
+    run_length = 1
+
+    for value in data[1:]:
+        if value == run_value and run_length < 255:
+            run_length += 1
+        else:
+            output.extend((run_length, run_value))
+            run_value = value
+            run_length = 1
+
+    output.extend((run_length, run_value))
+    return bytes(output)
+
+
+def generate_asset_and_compression_fixtures(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "valid").mkdir(exist_ok=True)
+    (root / "invalid").mkdir(exist_ok=True)
+
+    name = b"hello.txt"
+    payload = b"Hello BUN assets!\n"
+    payload_crc = zlib.crc32(payload) & 0xffffffff
+
+    write_custom_fixture(
+        root / "valid" / "10-valid-asset.bun",
+        names=name,
+        payloads=[payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(name),
+            "data_offset": 0,
+            "data_size": len(payload),
+            "uncompressed_size": 0,
+            "compression": COMPRESS_NONE,
+            "asset_type": 1,
+            "checksum": payload_crc,
+            "flags": 0,
+        }],
+    )
+
+    write_custom_fixture(
+        root / "invalid" / "10-name-oob.bun",
+        names=name,
+        payloads=[payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(name) + 8,
+            "data_offset": 0,
+            "data_size": len(payload),
+            "checksum": payload_crc,
+        }],
+    )
+
+    bad_name = b"bad\x01name"
+    write_custom_fixture(
+        root / "invalid" / "11-name-non-printable.bun",
+        names=bad_name,
+        payloads=[payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(bad_name),
+            "data_offset": 0,
+            "data_size": len(payload),
+            "checksum": payload_crc,
+        }],
+    )
+
+    write_custom_fixture(
+        root / "invalid" / "12-data-oob.bun",
+        names=name,
+        payloads=[payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(name),
+            "data_offset": 0,
+            "data_size": len(payload) + 32,
+            "checksum": payload_crc,
+        }],
+    )
+
+    write_custom_fixture(
+        root / "invalid" / "13-bad-flags.bun",
+        names=name,
+        payloads=[payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(name),
+            "data_offset": 0,
+            "data_size": len(payload),
+            "checksum": payload_crc,
+            "flags": 0x80,
+        }],
+    )
+
+    write_custom_fixture(
+        root / "invalid" / "14-checksum-mismatch.bun",
+        names=name,
+        payloads=[payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(name),
+            "data_offset": 0,
+            "data_size": len(payload),
+            "checksum": 0x12345678,
+        }],
+    )
+
+    write_custom_fixture(
+        root / "valid" / "20-compression-none.bun",
+        names=b"plain.bin",
+        payloads=[payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(b"plain.bin"),
+            "data_offset": 0,
+            "data_size": len(payload),
+            "uncompressed_size": 0,
+            "compression": COMPRESS_NONE,
+            "asset_type": 2,
+            "checksum": payload_crc,
+            "flags": 0,
+        }],
+    )
+
+    rle_plain = b"AAAABBBBCCCCDDDD"
+    rle_payload = rle_encode(rle_plain)
+    rle_crc = zlib.crc32(rle_plain) & 0xffffffff
+    write_custom_fixture(
+        root / "valid" / "21-compression-rle.bun",
+        names=b"rle.bin",
+        payloads=[rle_payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(b"rle.bin"),
+            "data_offset": 0,
+            "data_size": len(rle_payload),
+            "uncompressed_size": len(rle_plain),
+            "compression": COMPRESS_RLE,
+            "asset_type": 2,
+            "checksum": rle_crc,
+            "flags": 0,
+        }],
+    )
+
+    write_custom_fixture(
+        root / "invalid" / "20-compression-rle-malformed.bun",
+        names=b"rle-bad.bin",
+        payloads=[b"\x00A\x02B"],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(b"rle-bad.bin"),
+            "data_offset": 0,
+            "data_size": 4,
+            "uncompressed_size": 2,
+            "compression": COMPRESS_RLE,
+            "asset_type": 2,
+            "checksum": zlib.crc32(b"BB") & 0xffffffff,
+            "flags": 0,
+        }],
+    )
+
+    write_custom_fixture(
+        root / "invalid" / "21-compression-zlib-unsupported.bun",
+        names=b"zlib.bin",
+        payloads=[b"x\x9c\x03\x00\x00\x00\x00\x01"],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(b"zlib.bin"),
+            "data_offset": 0,
+            "data_size": 8,
+            "uncompressed_size": 4,
+            "compression": COMPRESS_ZLIB,
+            "asset_type": 2,
+            "checksum": 0,
+            "flags": 0,
+        }],
+    )
+
+    # Large-file fixture for T5: big enough that "slurp into RAM" would be obvious.
+    large_payload = b"A" * (64 * 1024 * 1024)
+    large_crc = zlib.crc32(large_payload) & 0xffffffff
+    write_custom_fixture(
+        root / "valid" / "30-large-file.bun",
+        names=b"large.bin",
+        payloads=[large_payload],
+        records=[{
+            "name_offset": 0,
+            "name_length": len(b"large.bin"),
+            "data_offset": 0,
+            "data_size": len(large_payload),
+            "uncompressed_size": 0,
+            "compression": COMPRESS_NONE,
+            "asset_type": 3,
+            "checksum": large_crc,
+            "flags": 0,
+        }],
+        data_section_size=_align4(len(large_payload)),
+    )
+
+
+def generate_all_fixtures(root: Path) -> None:
+    generate_header_fixtures(root)
+    generate_asset_and_compression_fixtures(root)
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Generate BUN files.")
     parser.add_argument(
@@ -378,11 +684,19 @@ def main(argv=None):
         "--header-fixtures",
         type=Path,
         metavar="DIR",
-        help="generate header test fixtures under DIR/{valid,invalid}",
+        help="write header-only fixtures for test_bun.c under DIR/valid and DIR/invalid",
+    )
+    parser.add_argument(
+        "--fixtures",
+        type=Path,
+        metavar="DIR",
+        help="write the full fixture set under DIR/valid and DIR/invalid",
     )
     args = parser.parse_args(argv)
 
-    if args.header_fixtures is not None:
+    if args.fixtures is not None:
+        generate_all_fixtures(args.fixtures)
+    elif args.header_fixtures is not None:
         generate_header_fixtures(args.header_fixtures)
     else:
         write_minimal(args.output)
