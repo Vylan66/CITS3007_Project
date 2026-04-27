@@ -104,7 +104,7 @@ bun_result_t bun_read_data(const BunHeader *header, BunParseContext *ctx, BunAss
 
   if (header->data_section_offset >= (u64)ctx->file_size) {return BUN_MALFORMED;}
   if (entry->data_offset > (u64)ctx->file_size - header->data_section_offset) {return BUN_MALFORMED;} 
-  if (entry->checksum == 0) { return BUN_UNSUPPORTED; }
+  if (entry->checksum != 0) { return BUN_UNSUPPORTED; }
 
   u64 actual_offset = header->data_section_offset + entry->data_offset;
 
@@ -494,6 +494,11 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         u8 buf[BUN_ASSET_RECORD_SIZE];
         bun_result_t name_result;
 
+        u64 record_offset = header->asset_table_offset + (i * sizeof(BunAssetRecord));
+        if (fseek(ctx->file, (long)record_offset, SEEK_SET) != 0) { 
+            goto fail_io;
+        }
+
         // Read raw asset record bytes from file
         if (fread(buf, 1, BUN_ASSET_RECORD_SIZE, ctx->file) != BUN_ASSET_RECORD_SIZE) {
             /* TODO A1: read asset records safely (handle malformed/truncated files) */
@@ -625,8 +630,8 @@ void bun_free_context(BunParseContext *ctx) {
             if (ctx->asset_files[i] != NULL) {
                 fclose(ctx->asset_files[i]);
             }
-            free(ctx->asset_names);
         }
+        free(ctx->asset_names);
     }
 
     if (ctx->payload_previews != NULL) {
