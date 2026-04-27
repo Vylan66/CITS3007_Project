@@ -3,18 +3,19 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stddef.h>
 
 //
 // Result codes (per BUN spec section 2)
 //
 
 typedef enum {
-    BUN_OK          = 0,
-    BUN_MALFORMED   = 1,
-    BUN_UNSUPPORTED = 2,
-    BUN_ERR_IO      = 3,   /* I/O error or file not found -- you may define
-                              additional codes in the range 3-10 as needed;
-                              document them in your report */
+    BUN_OK              = 0,
+    BUN_MALFORMED       = 1,
+    BUN_UNSUPPORTED     = 2,
+    BUN_ERR_IO          = 3,
+    BUN_ERR_USAGE       = 4,
+    BUN_ERR_INTERNAL    = 5,
 } bun_result_t;
 
 //
@@ -40,6 +41,8 @@ typedef uint64_t u64;
 
 #define BUN_MAX_ERRORS 32
 #define BUN_ERROR_MSG_LEN 256
+
+#define BUN_PAYLOAD_PREVIEW_LEN 60
 
 typedef struct {
     u32 magic;
@@ -96,6 +99,8 @@ typedef struct {
     BunAssetRecord *assets;      // dynamically allocated array of parsed asset records
     u32      parsed_asset_count; // number of asset records stored in assets
     char   **asset_names;        // dynamically allocated array of parsed asset names
+    u8 **payload_previews;
+    u32 *payload_preview_lengths;
 
     FILE  **asset_files;
 
@@ -151,12 +156,11 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header);
  * in the header (needed for offset calculations) or to return the parsed
  * records to the caller.
  */
+
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header);
 
-/**
- * Close the file handle in ctx. Must only be called on a BunParseContext
- * holding an open FILE*. Returns BUN_OK on success, BUN_ERR_IO on error.
- */
+void bun_free_context(BunParseContext *ctx);
+
 bun_result_t bun_close(BunParseContext *ctx);
 
 #endif // BUN_H
