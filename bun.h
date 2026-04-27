@@ -3,18 +3,19 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stddef.h>
 
 //
 // Result codes (per BUN spec section 2)
 //
 
 typedef enum {
-    BUN_OK          = 0,
-    BUN_MALFORMED   = 1,
-    BUN_UNSUPPORTED = 2,
-    BUN_ERR_IO      = 3,   /* I/O error or file not found -- you may define
-                              additional codes in the range 3-10 as needed;
-                              document them in your report */
+    BUN_OK              = 0,
+    BUN_MALFORMED       = 1,
+    BUN_UNSUPPORTED     = 2,
+    BUN_ERR_IO          = 3,
+    BUN_ERR_USAGE       = 4,
+    BUN_ERR_INTERNAL    = 5,
 } bun_result_t;
 
 //
